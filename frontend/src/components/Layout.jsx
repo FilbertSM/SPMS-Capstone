@@ -8,8 +8,9 @@ const Layout = () => {
       <Sidebar />
       <main className="flex-1 flex flex-col h-screen overflow-hidden">
         <TopNav />
-        {/* Tempat halaman di-render (Dashboard, Alert, Audit, dll) */}
-        <Outlet /> 
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <Outlet />
+        </div>
         
         {/* Status bar */}
         <footer className="bg-[#051125] text-white px-4 sm:px-6 py-2 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 z-10 mb-[64px] md:mb-0">

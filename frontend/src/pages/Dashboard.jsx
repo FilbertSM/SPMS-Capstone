@@ -1,5 +1,16 @@
 import { Link } from 'react-router-dom';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ReferenceLine,
+} from 'recharts';
 import Form4Warning from '../components/Form4Warning';
 import { fetchJsonWithAuth } from '../utils/api';
 
@@ -23,34 +34,31 @@ const formatTime = (timestamp) => {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 };
 
-const createPolylinePoints = (values, width, height, padding = 10) => {
-  if (!values.length) return '';
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-
-  return values
-    .map((value, index) => {
-      const x = values.length === 1 ? width : (index / (values.length - 1)) * width;
-      const y = padding + ((max - value) / range) * (height - padding * 2);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(' ');
+const formatDateTick = (timestamp) => {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '';
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${day}/${month} ${hours}:${minutes}`;
 };
 
-const createAreaPath = (points, height) => {
-  if (!points) return '';
-  const pairs = points.split(' ');
-  return `M ${pairs.join(' L ')} L ${pairs[pairs.length - 1].split(',')[0]},${height} L 0,${height} Z`;
-};
-
-const movingAverage = (values) => {
-  if (!values.length) return [];
-  return values.map((_, index) => {
-    const start = Math.max(0, index - 2);
-    const slice = values.slice(start, index + 1);
-    return slice.reduce((sum, value) => sum + value, 0) / slice.length;
-  });
+const formatFullDateTime = (timestamp) => {
+  if (!timestamp) return 'No timestamp';
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return 'Invalid timestamp';
+  return (
+    date.toLocaleString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }) + ' WIB'
+  );
 };
 
 const statusStyle = {
@@ -101,7 +109,7 @@ const Dashboard = () => {
       }
       const [summaryPayload, telemetryPayload] = await Promise.all([
         fetchJsonWithAuth('/api/dashboard/summary'),
-        fetchJsonWithAuth('/api/telemetry/latest?limit=60'),
+        fetchJsonWithAuth('/api/telemetry/latest?limit=1440'),
       ]);
 
       setSummary(summaryPayload);
@@ -149,12 +157,39 @@ const Dashboard = () => {
     [telemetry],
   );
   const currentUsesFallback = telemetryCurrentValues.length === 0;
-  const currentValues = useMemo(() => {
-    const values = telemetryCurrentValues;
-    return values.length ? values : FALLBACK_CURRENT;
-  }, [telemetryCurrentValues]);
 
-  const baselineValues = useMemo(() => movingAverage(currentValues), [currentValues]);
+  const currentChartData = useMemo(() => {
+    if (!telemetry.length) {
+      return FALLBACK_CURRENT.map((val, idx) => ({
+        timestampLabel: `Point ${idx + 1}`,
+        fullTime: `Fallback Point ${idx + 1}`,
+        actualCurrent: val,
+        baselineCurrent: val,
+      }));
+    }
+
+    const rawSeries = telemetry.map((row) => {
+      const actual = toNumber(row.impeller_ampere);
+      return {
+        timestampLabel: formatDateTick(row.timestamp),
+        fullTime: formatFullDateTime(row.timestamp),
+        actualCurrent: actual !== null ? Number(actual.toFixed(2)) : null,
+      };
+    });
+
+    return rawSeries.map((item, idx, arr) => {
+      const start = Math.max(0, idx - 4);
+      const windowSlice = arr.slice(start, idx + 1).map((d) => d.actualCurrent).filter((v) => v !== null);
+      const baseline = windowSlice.length
+        ? windowSlice.reduce((sum, v) => sum + v, 0) / windowSlice.length
+        : item.actualCurrent;
+      return {
+        ...item,
+        baselineCurrent: baseline !== null ? Number(baseline.toFixed(2)) : null,
+      };
+    });
+  }, [telemetry]);
+
   const vibrationSensorValues = useMemo(() => {
     return telemetry
       .map((row) => {
@@ -166,10 +201,28 @@ const Dashboard = () => {
       .filter((value) => value !== null);
   }, [telemetry]);
   const vibrationUsesFallback = vibrationSensorValues.length === 0;
-  const vibrationValues = useMemo(
-    () => (vibrationSensorValues.length ? vibrationSensorValues : FALLBACK_VIBRATION),
-    [vibrationSensorValues],
-  );
+
+  const vibrationChartData = useMemo(() => {
+    if (!telemetry.length) {
+      return FALLBACK_VIBRATION.map((val, idx) => ({
+        timestampLabel: `Point ${idx + 1}`,
+        fullTime: `Fallback Point ${idx + 1}`,
+        xPeak: val,
+        zPeak: val,
+      }));
+    }
+
+    return telemetry.map((row) => {
+      const x = toNumber(row.x_axis_peak_acceleration);
+      const z = toNumber(row.z_axis_peak_acceleration);
+      return {
+        timestampLabel: formatDateTick(row.timestamp),
+        fullTime: formatFullDateTime(row.timestamp),
+        xPeak: x !== null ? Number(x.toFixed(3)) : null,
+        zPeak: z !== null ? Number(z.toFixed(3)) : null,
+      };
+    });
+  }, [telemetry]);
 
   const latestReading = summary?.latest_reading || telemetry[telemetry.length - 1] || null;
   const latestPrediction = summary?.latest_prediction || null;
@@ -185,22 +238,16 @@ const Dashboard = () => {
         : status === 'NO DATA'
           ? 'bg-[#75777d]'
           : 'bg-[#00743a]';
-  const hasTelemetry = telemetry.length > 0;
   const inferenceRuntimeMessage =
     inferenceState.status === 503
       ? 'ML runtime or artifacts are unavailable. Confirm Docker imports and copied model artifacts before rerunning latest-window inference.'
       : null;
 
-  const currentPoints = createPolylinePoints(currentValues, 1000, 100, 12);
-  const baselinePoints = createPolylinePoints(baselineValues, 1000, 100, 12);
-  const currentAreaPath = createAreaPath(currentPoints, 100);
-  const vibrationPoints = createPolylinePoints(vibrationValues, 400, 100, 16);
-  const vibrationAreaPath = createAreaPath(vibrationPoints, 100);
-  const currentMax = Math.max(10, Math.ceil(Math.max(...currentValues) * 1.2));
-  const currentLabels = [currentMax, currentMax * 0.75, currentMax * 0.5, currentMax * 0.25, 0];
   const gaugeRatio = anomalyScore !== null && threshold ? Math.min(anomalyScore / Math.max(threshold * 1.25, anomalyScore), 1) : 0.08;
   const gaugeOffset = 251.2 - 251.2 * gaugeRatio;
-  const latestVibration = vibrationValues[vibrationValues.length - 1];
+  const latestVibration = vibrationSensorValues.length
+    ? vibrationSensorValues[vibrationSensorValues.length - 1]
+    : FALLBACK_VIBRATION[FALLBACK_VIBRATION.length - 1];
 
   const sensorCards = [
     ['thermostat', 'Temp S-01', latestReading?.temperature_c],
@@ -210,7 +257,7 @@ const Dashboard = () => {
   ];
 
   return (
-    <div className="page-container bg-[#f1f4f3] space-y-8 min-h-screen">
+    <div className="page-container bg-[#f1f4f3] space-y-8">
       {error && (
         <div className="bg-[#ffdad6] border border-[#ba1a1a]/20 text-[#ba1a1a] rounded-lg px-4 py-3 text-sm font-bold">
           Backend data unavailable: {error}
@@ -319,65 +366,82 @@ const Dashboard = () => {
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-8 bg-white rounded-xl p-6 shadow-sm border border-[#c5c6cd]/10">
           {currentUsesFallback && <Form4Warning className="mb-5" />}
-          <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center justify-between mb-4">
             <div>
               <h4 className="font-headline font-bold text-[#051125] flex items-center gap-2">
                 <span className="material-symbols-outlined text-[#051125]">electric_bolt</span>
-                Motor Current vs Rolling Baseline
+                Motor Current vs Rolling Baseline (24-Hour Stream)
               </h4>
               <p className="text-xs text-[#45474d] mt-1 font-body">
-                {currentUsesFallback ? 'Fallback values shown because backend current telemetry is unavailable' : 'Backend telemetry stream for impeller motor current'}
+                {currentUsesFallback ? 'Fallback values shown because backend current telemetry is unavailable' : '24-hour continuous telemetry stream with anomaly threshold reference'}
               </p>
-            </div>
-            <div className="flex items-center gap-4 text-[10px] font-bold font-headline uppercase tracking-widest">
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-0.5 bg-[#1B263B]"></span>
-                <span className="text-[#051125]">Actual</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-0.5 border-t border-dashed border-slate-500"></span>
-                <span className="text-[#45474d]">Baseline</span>
-              </div>
             </div>
           </div>
 
-          <div className="relative h-64 w-full px-2">
-            <div className="absolute left-0 top-0 bottom-6 flex flex-col justify-between text-[9px] font-bold font-headline text-[#75777d] pr-2">
-              {currentLabels.map((label) => (
-                <span key={label}>{label.toFixed(1)}</span>
-              ))}
-            </div>
-            <div className="ml-8 h-full relative">
-              <div className="absolute inset-0 flex flex-col justify-between py-0 pointer-events-none">
-                <div className="border-t border-[#c5c6cd]/20 w-full h-0"></div>
-                <div className="border-t border-[#c5c6cd]/20 w-full h-0"></div>
-                <div className="border-t border-[#c5c6cd]/20 w-full h-0"></div>
-                <div className="border-t border-[#c5c6cd]/20 w-full h-0"></div>
-                <div className="border-b border-[#c5c6cd]/40 w-full h-0"></div>
+          <div className="h-[280px] w-full">
+            {loading ? (
+              <div className="flex h-full items-center justify-center text-[#45474d] text-xs font-bold uppercase tracking-widest">
+                Syncing telemetry stream...
               </div>
-              <div className="absolute top-[15%] w-full border-t border-[#ba1a1a]/60 border-dashed z-10 flex justify-end">
-                <span className="text-[8px] font-headline font-bold text-[#ba1a1a] bg-white px-1 -mt-2">
-                  Anomaly threshold: {threshold === null ? '-' : threshold.toFixed(3)}
-                </span>
+            ) : currentChartData.length === 0 ? (
+              <div className="flex h-full items-center justify-center text-[#45474d] text-xs font-bold uppercase tracking-widest">
+                No backend telemetry rows yet
               </div>
-              <svg className="absolute inset-0 w-full h-full" preserveAspectRatio="none" viewBox="0 0 1000 100">
-                <path d={currentAreaPath} fill="rgba(100, 116, 139, 0.1)"></path>
-                <polyline fill="none" points={currentPoints} stroke="#1B263B" strokeWidth="2"></polyline>
-                <polyline fill="none" points={baselinePoints} stroke="#64748b" strokeDasharray="4,2" strokeWidth="1.5"></polyline>
-              </svg>
-              {!hasTelemetry && (
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="rounded-full bg-white/90 px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#45474d] shadow-sm">
-                    No backend telemetry rows yet
-                  </span>
-                </div>
-              )}
-              <div className="absolute -bottom-6 inset-x-0 flex justify-between text-[9px] font-bold font-headline text-[#75777d]">
-                <span>{formatTime(telemetry[0]?.timestamp)}</span>
-                <span>{formatTime(telemetry[Math.floor(telemetry.length / 2)]?.timestamp)}</span>
-                <span>{formatTime(telemetry[telemetry.length - 1]?.timestamp)}</span>
-              </div>
-            </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={currentChartData} margin={{ top: 10, right: 30, left: -10, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e0e3e2" />
+                  <XAxis
+                    dataKey="timestampLabel"
+                    stroke="#75777d"
+                    fontSize={10}
+                    tickLine={false}
+                    axisLine={false}
+                    minTickGap={40}
+                  />
+                  <YAxis
+                    stroke="#75777d"
+                    fontSize={10}
+                    tickLine={false}
+                    axisLine={false}
+                    unit=" A"
+                  />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#051125', borderRadius: '8px', border: 'none', color: '#ffffff' }}
+                    labelStyle={{ color: '#94a3b8', fontSize: '11px', fontWeight: '600' }}
+                    itemStyle={{ fontSize: '12px', fontWeight: '600' }}
+                    labelFormatter={(label, payload) => payload?.[0]?.payload?.fullTime || label}
+                  />
+                  <Legend iconType="circle" wrapperStyle={{ paddingTop: '10px', fontSize: '11px', fontWeight: 'bold' }} />
+                  {threshold !== null && (
+                    <ReferenceLine
+                      y={threshold}
+                      stroke="#ba1a1a"
+                      strokeDasharray="4 4"
+                      label={{ value: `Threshold: ${threshold.toFixed(3)}`, fill: '#ba1a1a', fontSize: 10, position: 'top' }}
+                    />
+                  )}
+                  <Line
+                    type="monotone"
+                    dataKey="actualCurrent"
+                    name="Actual Current (A)"
+                    stroke="#1B263B"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4 }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="baselineCurrent"
+                    name="Rolling Baseline (A)"
+                    stroke="#64748b"
+                    strokeDasharray="4 4"
+                    strokeWidth={1.5}
+                    dot={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
 
@@ -415,26 +479,72 @@ const Dashboard = () => {
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-7 bg-white rounded-xl p-6 shadow-sm flex flex-col justify-between">
           {vibrationUsesFallback && <Form4Warning className="mb-5" />}
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between mb-4">
             <h4 className="font-headline font-bold text-[#051125] flex items-center gap-2">
               <span className="material-symbols-outlined text-[#1b263b]">waves</span>
-              Vibration Peak Acceleration
+              Vibration Peak Acceleration (24-Hour Stream)
             </h4>
             <span className="text-xs font-bold text-[#006d37] bg-[#6bfe9c] px-3 py-1 rounded-full">
               {formatNumber(latestVibration, 2)} g
             </span>
           </div>
 
-          <div className="h-32 w-full flex items-center">
-            <svg className="w-full h-full" viewBox="0 0 400 100" preserveAspectRatio="none">
-              <path className="text-[#006d37]/10" d={vibrationAreaPath} fill="currentColor"></path>
-              <polyline className="text-[#006d37]" points={vibrationPoints} fill="none" stroke="currentColor" strokeWidth="2"></polyline>
-            </svg>
-          </div>
-          <div className="flex justify-between text-[10px] text-[#45474d] font-bold uppercase tracking-wider mt-2">
-            <span>-60 min</span>
-            <span>-30 min</span>
-            <span>Now</span>
+          <div className="h-[240px] w-full">
+            {loading ? (
+              <div className="flex h-full items-center justify-center text-[#45474d] text-xs font-bold uppercase tracking-widest">
+                Syncing vibration stream...
+              </div>
+            ) : vibrationChartData.length === 0 ? (
+              <div className="flex h-full items-center justify-center text-[#45474d] text-xs font-bold uppercase tracking-widest">
+                No vibration data available
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={vibrationChartData} margin={{ top: 10, right: 20, left: -10, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e0e3e2" />
+                  <XAxis
+                    dataKey="timestampLabel"
+                    stroke="#75777d"
+                    fontSize={10}
+                    tickLine={false}
+                    axisLine={false}
+                    minTickGap={40}
+                  />
+                  <YAxis
+                    stroke="#75777d"
+                    fontSize={10}
+                    tickLine={false}
+                    axisLine={false}
+                    unit=" g"
+                  />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#051125', borderRadius: '8px', border: 'none', color: '#ffffff' }}
+                    labelStyle={{ color: '#94a3b8', fontSize: '11px', fontWeight: '600' }}
+                    itemStyle={{ fontSize: '12px', fontWeight: '600' }}
+                    labelFormatter={(label, payload) => payload?.[0]?.payload?.fullTime || label}
+                  />
+                  <Legend iconType="circle" wrapperStyle={{ paddingTop: '10px', fontSize: '11px', fontWeight: 'bold' }} />
+                  <Line
+                    type="monotone"
+                    dataKey="xPeak"
+                    name="X-Peak (g)"
+                    stroke="#006d37"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4 }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="zPeak"
+                    name="Z-Peak (g)"
+                    stroke="#3b82f6"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
 
