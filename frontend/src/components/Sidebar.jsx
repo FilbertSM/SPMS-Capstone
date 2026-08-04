@@ -2,7 +2,6 @@ import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
 const secondaryItems = [
-  { path: '/app/support', icon: 'help', label: 'Support' },
   { path: '/app/status', icon: 'analytics', label: 'Status' },
 ];
 
@@ -76,7 +75,7 @@ const Sidebar = () => {
 
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 border-t border-[#c5c6cd]/30 bg-white/95 backdrop-blur px-2 py-2 shadow-[0_-8px_20px_rgba(5,17,37,0.08)]">
         <div className="grid grid-cols-5 gap-1">
-          {navItems.slice(0, 4).concat(secondaryItems[1]).map((item) => (
+          {navItems.slice(0, 4).concat(secondaryItems[0]).map((item) => (
             <Link
               key={item.path}
               to={item.path}

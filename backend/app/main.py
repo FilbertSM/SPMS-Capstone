@@ -122,6 +122,7 @@ def _append_audit_log(
         db.query(models.AuditLog)
         .filter(models.AuditLog.record_hash.isnot(None))
         .order_by(models.AuditLog.id.desc())
+        .with_for_update() 
         .first()
     )
     

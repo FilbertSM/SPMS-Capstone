@@ -54,8 +54,7 @@ const TopNav = () => {
   }, []);
 
   return (
-    <header className="flex justify-between items-center w-full px-4 sm:px-6 py-3 border-b border-[#c5c6cd]/15 bg-[#f7faf9] dark:bg-[#051125] relative z-50 gap-3">
-      
+        <header className="flex justify-between items-center w-full px-4 sm:px-6 h-[72px] border-b border-[#c5c6cd]/15 bg-[#f7faf9] dark:bg-[#051125] relative z-50 gap-3">       
       {/* Left side: Branding */}
       <div className="flex min-w-0 items-center gap-3 sm:gap-4">
         <h1 className="truncate text-base sm:text-lg font-bold text-[#051125] dark:text-[#f1f4f3] tracking-tighter font-headline">SPMS Granulator 01</h1>
@@ -65,25 +64,6 @@ const TopNav = () => {
 
       {/* Right side: Actions & User Profile */}
       <div className="flex items-center gap-2 sm:gap-6">
-        
-        {/* Quick Actions */}
-        <div className="hidden sm:flex items-center gap-4">
-          <button
-            onClick={() => navigate('/app/alerts')}
-            className="p-2 hover:bg-[#ebeeed] dark:hover:bg-[#1b263b] rounded-full transition-colors relative"
-            title="Open alerts"
-          >
-            <span className="material-symbols-outlined text-[#051125] dark:text-[#f7faf9]">notifications</span>
-            <span className="absolute top-2 right-2 w-2 h-2 bg-[#ba1a1a] rounded-full border-2 border-[#f7faf9]"></span>
-          </button>
-          <button
-            onClick={() => navigate('/app/audit')}
-            className="p-2 hover:bg-[#ebeeed] dark:hover:bg-[#1b263b] rounded-full transition-colors"
-            title="Open audit logs"
-          >
-            <span className="material-symbols-outlined text-[#051125] dark:text-[#f7faf9]">verified_user</span>
-          </button>
-        </div>
 
         {/* User Profile & Dropdown Trigger */}
         <div className="relative" ref={dropdownRef}>
