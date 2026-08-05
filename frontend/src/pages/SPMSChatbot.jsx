@@ -9,31 +9,37 @@ import remarkGfm from 'remark-gfm';
 const uploadEngineeringManual = async (file, currentMachine, onUploadProgress) => {
     const formData = new FormData();
     formData.append('file', file);
-    
-    // It attaches the machine string (e.g. "FETTE") as the metadata tag
-    formData.append('machine_type', currentMachine); 
 
+    // It attaches the machine string (e.g. "FETTE") as the metadata tag
+    formData.append('machine_type', currentMachine);
+
+    const token = localStorage.getItem('spms_token');
     const response = await axios.post('http://127.0.0.1:8000/api/rag/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
         onUploadProgress: onUploadProgress // This keeps your progress bar working!
     });
-    
+
     return response.data;
 };
 
 const sendChatQuestion = async (trimmedQuery, currentMachine, targetLanguage) => {
   try {
+    const token = localStorage.getItem('spms_token');
     const response = await axios.post('http://127.0.0.1:8000/api/rag/chat', {
       question: trimmedQuery,
       machine_filter: currentMachine,
       target_language: targetLanguage
     }, {
-      timeout: 120000, 
+      timeout: 120000,
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       }
     });
-    
+
     return response.data;
   } catch (error) {
     console.error("Full Backend Error:", error);

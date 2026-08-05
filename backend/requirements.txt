@@ -49,7 +49,7 @@ typing_extensions==4.15.0
 typing-inspection==0.4.2
 uvicorn==0.29.0
 watchfiles==1.1.1
-websockets==16.0
+websockets>=14,<16
 wrapt==2.1.2
 fastapi-mail==1.4.1
 
