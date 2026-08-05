@@ -266,7 +266,14 @@ class SPMSChatEngine:
         Answer the user's question using ONLY the provided technical context.
         Do not guess or hallucinate.
         
-        CRITICAL INSTRUCTION: You must write your final response entirely in {target_language}.
+        FORMATTING RULES:
+        1. Use **bold text** for specific limits, metrics, or section headers (e.g., **Preparation:**).
+        2. Use bullet points (*) for lists and safety warnings.
+        3. Use numbered lists (1., 2., 3.) for step-by-step procedures.
+        4. Use blockquotes (>) for critical safety hazards.
+        5. Use Markdown tables for comparing properties, alarms, or severity levels.
+        
+        CRITICAL INSTRUCTION: You must write your final response and apply all formatting entirely in {target_language}.
         
         Context:
         {context_string}
