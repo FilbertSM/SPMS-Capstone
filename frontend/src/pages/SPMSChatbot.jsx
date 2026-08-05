@@ -115,8 +115,6 @@ const SPMSChatDashboard = () => {
     const trimmedQuery = inputQuery.trim();
     if (!trimmedQuery || isQuerying) return;
 
-    const botResponse = await sendChatQuestion(trimmedQuery, activeMachine, selectedLanguage);
-
     // Append user query to thread immediately
     const userMessage = { sender: 'user', text: trimmedQuery, timestamp: new Date() };
     setMessages((prev) => [...prev, userMessage]);
@@ -125,7 +123,6 @@ const SPMSChatDashboard = () => {
 
     try {
       // 2. Await the backend
-      console.log("SENDING TO PYTHON:", selectedLanguage);
       const responseData = await sendChatQuestion(trimmedQuery, activeMachine, selectedLanguage);
       
       // THE FIX 1: Protect against undefined/null responses

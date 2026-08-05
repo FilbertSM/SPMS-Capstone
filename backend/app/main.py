@@ -1665,7 +1665,8 @@ class ChatRequest(BaseModel):
 @app.post("/api/rag/upload")
 async def upload_manual(
     file: UploadFile = File(...),
-    machine_type: str = Form(...)  # Receives "PMA", "Fette", etc., from the dropdown
+    machine_type: str = Form(...),  # Receives "PMA", "Fette", etc., from the dropdown
+    current_user: models.User = Depends(get_current_user),
 ):
     try:
         # Validate input to ensure data sanitization
@@ -1696,7 +1697,10 @@ async def upload_manual(
     
 
 @app.post("/api/rag/chat")
-async def execute_rag_query(payload: ChatRequest):
+async def execute_rag_query(
+    payload: ChatRequest,
+    current_user: models.User = Depends(get_current_user),
+):
     """Answers user queries grounded securely inside engineering documentation."""
     try:
         # Ask the gatekeeper for the AI. 

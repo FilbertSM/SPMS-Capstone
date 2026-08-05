@@ -16,7 +16,7 @@ const Settings = lazy(() => import('./pages/Settings'));
 const Profile = lazy(() => import('./pages/Profile'));
 const PmaDashboard = lazy(() => import('./pages/PMAChart'));
 const MotorChart = lazy(() => import('./pages/VibrationChart'));
-const Support = lazy(() => import('./pages/Support'));
+// const Support = lazy(() => import('./pages/Support'));
 const SystemStatus = lazy(() => import('./pages/SystemStatus'));
 const MaintenanceTicket = lazy(() => import('./pages/MaintenanceTicket'));
 
