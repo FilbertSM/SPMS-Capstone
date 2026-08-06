@@ -43,7 +43,7 @@ import random
 from datetime import timedelta
 
 from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from typing import Optional
 from app.core.rag_engine.rag_engine import run_ingestion_pipeline, SPMSChatEngine
 
@@ -847,6 +847,59 @@ def update_user_preferences(
         "message": "Preferences updated successfully",
         "email_notifications": current_user.email_notifications,
     }
+
+class UserCreateByAdmin(BaseModel):
+    full_name: str
+    email: EmailStr
+    password: str
+    role: str = "technician"
+
+@app.post("/api/users", response_model=schemas.UserResponse, status_code=status.HTTP_201_CREATED)
+def create_user_by_admin(
+    request: Request,
+    user_data: UserCreateByAdmin,
+    current_user: models.User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    normalized_email = user_data.email.strip().lower()
+    client_ip, user_agent = _audit_context(request)
+
+    # Hanya Super Admin yang bisa membuat akun level Admin/Super Admin
+    if current_user.role.lower() == "admin" and user_data.role.lower() in ["admin", "super_admin"]:
+        raise HTTPException(status_code=403, detail="Admins can only create technician accounts.")
+
+    # Cek apakah email sudah terdaftar
+    existing_user = db.query(models.User).filter(models.User.email == normalized_email).first()
+    if existing_user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered.")
+
+    # Validasi policy password
+    password_error = _password_policy_error(user_data.password)
+    if password_error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=password_error)
+
+    # Buat user baru
+    new_user = models.User(
+        full_name=user_data.full_name,
+        email=normalized_email,
+        hashed_password=security.get_password_hash(user_data.password),
+        role=user_data.role,
+        is_active=True
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    # Catat ke Audit Log
+    _record_audit_log(
+        db, 
+        request=request, 
+        user_email=current_user.email, 
+        action=f"ADMIN_CREATE_USER: {new_user.email}", 
+        status_value="SUCCESS"
+    )
+    
+    return new_user
 
 # ==========================================
 # --- AUDITED MAINTENANCE TICKET ENDPOINTS ---

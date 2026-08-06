@@ -11,6 +11,10 @@ const AdminDashboard = () => {
 
   // --- STATE UNTUK EDIT MODAL ---
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [createFormData, setCreateFormData] = useState({ full_name: '', email: '', password: '', role: 'technician' });
+  const [isCreating, setIsCreating] = useState(false);
+  const [modalError, setModalError] = useState(null);
   const [selectedUser, setSelectedUser] = useState(null);
   const [editFormData, setEditFormData] = useState({ role: '', is_active: true });
   const [isSaving, setIsSaving] = useState(false);
@@ -79,6 +83,25 @@ const AdminDashboard = () => {
     }
     };
 
+  const handleCreateUser = async () => {
+    setIsCreating(true);
+    setModalError(null); 
+    try {
+      await fetchJsonWithAuth('/api/users', {
+        method: 'POST',
+        body: JSON.stringify(createFormData),
+      });
+      
+      loadUsers(); 
+      setIsCreateModalOpen(false);
+      setCreateFormData({ full_name: '', email: '', password: '', role: 'technician' }); 
+    } catch (err) {
+      setModalError(err.message);
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full bg-[#f1f4f3] font-body relative">
       
@@ -132,6 +155,19 @@ const AdminDashboard = () => {
                 </h2>
                 <p className="text-subtitle mt-1">Overview of all active and inactive accounts.</p>
               </div>
+              
+              {/* --- TOMBOL ADD USER DITAMBAHKAN DI SINI --- */}
+              {isSuperAdmin && (
+                <button 
+                  onClick={() => setIsCreateModalOpen(true)}
+                  className="px-4 py-2 bg-[#1b263b] text-white text-sm font-bold rounded-lg flex items-center gap-2 hover:bg-[#1b263b]/90 transition-colors shadow-sm"
+                >
+                  <span className="material-symbols-outlined text-[18px]">person_add</span>
+                  Add New User
+                </button>
+              )}
+              {/* ------------------------------------------- */}
+              
             </div>
 
             {error && (
@@ -288,6 +324,91 @@ const AdminDashboard = () => {
               </button>
               <button onClick={handleSaveUser} disabled={isSaving} className="px-4 py-2 text-sm font-bold bg-[#1b263b] text-white rounded-lg hover:bg-[#1b263b]/90 transition-colors flex items-center gap-2">
                 {isSaving ? <span className="material-symbols-outlined animate-spin text-[16px]">sync</span> : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {isCreateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#1b263b]/40 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+           <div className="px-6 py-4 border-b border-[#c5c6cd]/30 flex justify-between items-center bg-[#f8faf9]">
+              <h3 className="font-bold text-[#1b263b] flex items-center gap-2">
+                <span className="material-symbols-outlined">person_add</span>
+                Create New User
+              </h3>
+              <button 
+                onClick={() => {
+                  setIsCreateModalOpen(false);
+                  setModalError(null); // Hapus error jika modal ditutup
+                }} 
+                className="text-[#75777d] hover:text-[#ba1a1a]"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            
+            {modalError && (
+              <div className="mx-6 mt-4 p-3 bg-[#ba1a1a]/10 border border-[#ba1a1a]/20 text-[#ba1a1a] rounded-lg text-xs font-bold flex items-start gap-2 animate-fade-in">
+                <span className="material-symbols-outlined text-[16px]">error</span>
+                <span className="flex-1 leading-relaxed">{modalError}</span>
+              </div>
+            )}
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-[10px] font-bold text-[#75777d] uppercase tracking-widest mb-2">Full Name</label>
+                <input 
+                  type="text"
+                  value={createFormData.full_name}
+                  onChange={(e) => setCreateFormData({...createFormData, full_name: e.target.value})}
+                  className="w-full border border-[#c5c6cd] rounded-lg px-3 py-2 text-sm text-[#1b263b] focus:outline-none focus:border-[#1b263b]"
+                  placeholder="e.g. budi.p@kalbecomsumerhealth.co.id"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-[#75777d] uppercase tracking-widest mb-2">Email Address</label>
+                <input 
+                  type="email"
+                  value={createFormData.email}
+                  onChange={(e) => setCreateFormData({...createFormData, email: e.target.value})}
+                  className="w-full border border-[#c5c6cd] rounded-lg px-3 py-2 text-sm text-[#1b263b] focus:outline-none focus:border-[#1b263b]"
+                  placeholder="e.g. budi.p@kalbeconsumerhealth.co.id"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-[#75777d] uppercase tracking-widest mb-2">Temporary Password</label>
+                <input 
+                  type="password"
+                  value={createFormData.password}
+                  onChange={(e) => setCreateFormData({...createFormData, password: e.target.value})}
+                  className="w-full border border-[#c5c6cd] rounded-lg px-3 py-2 text-sm text-[#1b263b] focus:outline-none focus:border-[#1b263b]"
+                  placeholder="Must contain 8 chars, uppercase, number & symbol"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-[#75777d] uppercase tracking-widest mb-2">Access Role</label>
+                <select 
+                  value={createFormData.role}
+                  onChange={(e) => setCreateFormData({...createFormData, role: e.target.value})}
+                  className="w-full border border-[#c5c6cd] rounded-lg px-3 py-2 text-sm text-[#1b263b] focus:outline-none focus:border-[#1b263b]"
+                >
+                  <option value="technician">Technician</option>
+                  <option value="admin">Admin</option>
+                  <option value="super_admin">Super Admin</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-[#c5c6cd]/30 bg-[#f8faf9] flex justify-end gap-3">
+              <button onClick={() => setIsCreateModalOpen(false)} className="px-4 py-2 text-sm font-bold text-[#45474d] hover:bg-[#e0e3e2] rounded-lg transition-colors">
+                Cancel
+              </button>
+              <button onClick={handleCreateUser} disabled={isCreating || !createFormData.email || !createFormData.password} className="px-4 py-2 text-sm font-bold bg-[#1b263b] text-white rounded-lg hover:bg-[#1b263b]/90 transition-colors flex items-center gap-2 disabled:opacity-50">
+                {isCreating ? <span className="material-symbols-outlined animate-spin text-[16px]">sync</span> : 'Create User'}
               </button>
             </div>
           </div>
