@@ -365,7 +365,6 @@ const Dashboard = () => {
 
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-8 bg-white rounded-xl p-6 shadow-sm border border-[#c5c6cd]/10">
-          {currentUsesFallback && <Form4Warning className="mb-5" />}
           <div className="flex items-center justify-between mb-4">
             <div>
               <h4 className="font-headline font-bold text-[#051125] flex items-center gap-2">
@@ -478,7 +477,6 @@ const Dashboard = () => {
 
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-7 bg-white rounded-xl p-6 shadow-sm flex flex-col justify-between">
-          {vibrationUsesFallback && <Form4Warning className="mb-5" />}
           <div className="flex items-center justify-between mb-4">
             <h4 className="font-headline font-bold text-[#051125] flex items-center gap-2">
               <span className="material-symbols-outlined text-[#1b263b]">waves</span>

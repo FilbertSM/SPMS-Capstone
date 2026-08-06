@@ -142,20 +142,22 @@ class SPMSChatEngine:
         )
         
         self.generation_prompt = PromptTemplate.from_template(
-            """You are a strict technical assistant for industrial machinery.
-            
-            Answer the user's question using ONLY the provided technical context. 
-            If the answer is not contained in the context, say 'I cannot find the answer in the manual.' 
-            Do not guess or hallucinate.
-            
-            CRITICAL INSTRUCTION: You must translate and write your final response entirely in Indonesian.
-            
-            Context:
-            {context}
-            
-            Question: {question}
-            
-            Answer:"""
+            """You are a precise industrial engineering AI. Answer the user's question using ONLY the provided technical context. 
+    If the answer is not contained in the context, say "I cannot find the answer in the manual." Do not guess.
+
+    FORMATTING RULES:
+    1. Use **bold text** for specific limits, metrics, or section headers (e.g., **Preparation:**).
+    2. Use bullet points (*) for lists and safety warnings.
+    3. Use numbered lists (1., 2., 3.) for step-by-step procedures.
+    4. Use blockquotes (>) for critical safety hazards.
+    5. Use Markdown tables for comparing properties, alarms, or severity levels.
+
+    Context:
+    {context}
+
+    Question: {question}
+    
+    Answer:"""
         )
 
     def retrieve_and_rerank(self, query: str, machine_filter: str = None, top_k: int = 3) -> list[str]:
@@ -266,7 +268,14 @@ class SPMSChatEngine:
         Answer the user's question using ONLY the provided technical context.
         Do not guess or hallucinate.
         
-        CRITICAL INSTRUCTION: You must write your final response entirely in {target_language}.
+        FORMATTING RULES:
+        1. Use **bold text** for specific limits, metrics, or section headers (e.g., **Preparation:**).
+        2. Use bullet points (*) for lists and safety warnings.
+        3. Use numbered lists (1., 2., 3.) for step-by-step procedures.
+        4. Use blockquotes (>) for critical safety hazards.
+        5. Use Markdown tables for comparing properties, alarms, or severity levels.
+        
+        CRITICAL INSTRUCTION: You must write your final response and apply all formatting entirely in {target_language}.
         
         Context:
         {context_string}

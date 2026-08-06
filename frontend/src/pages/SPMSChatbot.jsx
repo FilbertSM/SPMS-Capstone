@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 // ==========================================
 // 1. API HOOK IMPLEMENTATIONS (AXIOS)
@@ -7,31 +9,37 @@ import axios from 'axios';
 const uploadEngineeringManual = async (file, currentMachine, onUploadProgress) => {
     const formData = new FormData();
     formData.append('file', file);
-    
-    // It attaches the machine string (e.g. "FETTE") as the metadata tag
-    formData.append('machine_type', currentMachine); 
 
+    // It attaches the machine string (e.g. "FETTE") as the metadata tag
+    formData.append('machine_type', currentMachine);
+
+    const token = localStorage.getItem('spms_token');
     const response = await axios.post('http://127.0.0.1:8000/api/rag/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
         onUploadProgress: onUploadProgress // This keeps your progress bar working!
     });
-    
+
     return response.data;
 };
 
 const sendChatQuestion = async (trimmedQuery, currentMachine, targetLanguage) => {
   try {
+    const token = localStorage.getItem('spms_token');
     const response = await axios.post('http://127.0.0.1:8000/api/rag/chat', {
       question: trimmedQuery,
       machine_filter: currentMachine,
       target_language: targetLanguage
     }, {
-      timeout: 120000, 
+      timeout: 120000,
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       }
     });
-    
+
     return response.data;
   } catch (error) {
     console.error("Full Backend Error:", error);
@@ -46,7 +54,24 @@ const sendChatQuestion = async (trimmedQuery, currentMachine, targetLanguage) =>
 // ==========================================
 const SPMSChatDashboard = () => {
   // Chat States
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState(() => {
+    const savedSession = localStorage.getItem('spms_chat_history');
+    if (savedSession) {
+      try {
+        const parsedMessages = JSON.parse(savedSession);
+        // Map over the array to convert the timestamp strings back into actual Date objects
+        return parsedMessages.map(msg => ({
+          ...msg,
+          timestamp: new Date(msg.timestamp)
+        }));
+      } catch (error) {
+        console.error("Error parsing local storage history:", error);
+        return [];
+      }
+    }
+    return [];
+  });
+
   const [inputQuery, setInputQuery] = useState('');
   const [isQuerying, setIsQuerying] = useState(false);
   
@@ -66,13 +91,21 @@ const SPMSChatDashboard = () => {
   const [machineList, setMachineList] = useState(['PMA', 'Fette Tablet Press', 'Wetmill']);
   const [isAddingCustom, setIsAddingCustom] = useState(false);
   const [customMachineName, setCustomMachineName] = useState('');
-  
+
+  const clearChatHistory = () => {
+    setMessages([]);
+    localStorage.removeItem('spms_chat_history');
+  };
 
 
   // Auto-scroll chat window to the latest message
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isQuerying]);
+
+  useEffect(() => {
+    localStorage.setItem('spms_chat_history', JSON.stringify(messages));
+  }, [messages]);
 
   // Handle File Selection
   const handleFileChange = (e) => {
@@ -115,7 +148,7 @@ const SPMSChatDashboard = () => {
     const trimmedQuery = inputQuery.trim();
     if (!trimmedQuery || isQuerying) return;
 
-    const botResponse = await sendChatQuestion(trimmedQuery, activeMachine, selectedLanguage);
+    //  const botResponse = await sendChatQuestion(trimmedQuery, activeMachine, selectedLanguage);
 
     // Append user query to thread immediately
     const userMessage = { sender: 'user', text: trimmedQuery, timestamp: new Date() };
@@ -125,7 +158,6 @@ const SPMSChatDashboard = () => {
 
     try {
       // 2. Await the backend
-      console.log("SENDING TO PYTHON:", selectedLanguage);
       const responseData = await sendChatQuestion(trimmedQuery, activeMachine, selectedLanguage);
       
       // THE FIX 1: Protect against undefined/null responses
@@ -165,6 +197,13 @@ const SPMSChatDashboard = () => {
       // THE FIX 3: This ALWAYS runs, even if the try block crashes. 
       // It guarantees your UI will never freeze!
       setIsQuerying(false);
+    }
+  };
+
+  const handleClearChat = () => {
+    if (window.confirm("Are you sure you want to clear the chat history?")) {
+      setMessages([]);
+      localStorage.removeItem('spms_chat_history');
     }
   };
 
@@ -353,18 +392,32 @@ const SPMSChatDashboard = () => {
         {/* ========================================== */}
         <main className="flex-1 flex flex-col bg-slate-50">
           
-          {/* --- NEW CHAT HEADER (Language Toggle Moved Here) --- */}
+          {/* --- NEW CHAT HEADER --- */}
           <div className="flex justify-between items-center py-5 px-8 bg-white border-b border-slate-200 shadow-sm z-0">
             <h2 className="m-0 text-xl font-bold text-slate-800 tracking-wide">
               SPMS Chatbot <span className="text-xl font-medium text-slate-600 ml-2">({activeMachine})</span>
             </h2>
             
-            <button 
-              onClick={() => setSelectedLanguage((prev) => prev === "English" ? "Bahasa Indonesia" : "English")}
-              className="py-2 px-6 bg-blue-50 text-blue-700 border-2 border-blue-200 rounded-full cursor-pointer font-bold text-base tracking-wide transition-all hover:bg-blue-100 hover:border-blue-300 hover:shadow-md active:scale-[0.97] shadow-sm flex items-center gap-2"
-            >
-              Language: {selectedLanguage === "English" ? "English" : "Indonesian"}
-            </button>
+            {/* Top Right Controls Container */}
+            <div className="flex items-center gap-4">
+              {/* Clear Chat Button */}
+              {messages.length > 0 && (
+                <button 
+                  onClick={handleClearChat}
+                  className="py-2 px-4 bg-red-50 text-red-600 border-2 border-red-200 rounded-full cursor-pointer font-bold text-sm tracking-wide transition-all hover:bg-red-100 hover:border-red-300 hover:shadow-md active:scale-[0.97] shadow-sm flex items-center gap-2"
+                >
+                  Clear Chat
+                </button>
+              )}
+
+              {/* Language Toggle Button */}
+              <button 
+                onClick={() => setSelectedLanguage((prev) => prev === "English" ? "Bahasa Indonesia" : "English")}
+                className="py-2 px-6 bg-blue-50 text-blue-700 border-2 border-blue-200 rounded-full cursor-pointer font-bold text-base tracking-wide transition-all hover:bg-blue-100 hover:border-blue-300 hover:shadow-md active:scale-[0.97] shadow-sm flex items-center gap-2"
+              >
+                Language: {selectedLanguage === "English" ? "English" : "Indonesian"}
+              </button>
+            </div>
           </div>
 
           {/* Messages Stream */}
@@ -381,6 +434,7 @@ const SPMSChatDashboard = () => {
               <div key={index} style={{ display: 'flex', flexDirection: 'column', alignItems: msg.sender === 'user' ? 'flex-end' : 'flex-start' }}>
                 
                 {/* Bubble content */}
+                {/* Bubble content */}
                 <div style={{
                   maxWidth: '75%',
                   padding: '12px 16px',
@@ -391,9 +445,43 @@ const SPMSChatDashboard = () => {
                   color: msg.sender === 'user' ? '#fff' : msg.sender === 'system-error' ? '#991b1b' : '#1e293b',
                   border: msg.sender === 'user' ? 'none' : `1px solid ${msg.sender === 'system-error' ? '#fca5a5' : '#e2e8f0'}`,
                   boxShadow: msg.sender === 'user' ? 'none' : '0 1px 2px rgba(0,0,0,0.05)',
-                  whiteSpace: 'pre-wrap'
+                  // Remove 'pre-wrap' here so it doesn't conflict with Markdown's native HTML formatting
                 }}>
-                  {msg.text}
+                  {msg.sender === 'user' || msg.sender === 'system-error' ? (
+                    <span style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</span>
+                  ) : (
+                    <ReactMarkdown 
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          // Restore bullet points
+                          ul: ({node, ...props}) => <ul style={{ listStyleType: 'disc', paddingLeft: '1.5rem', marginBottom: '1rem' }} {...props} />,
+                          // Restore numbered lists
+                          ol: ({node, ...props}) => <ol style={{ listStyleType: 'decimal', paddingLeft: '1.5rem', marginBottom: '1rem' }} {...props} />,
+                          // Space out list items
+                          li: ({node, ...props}) => <li style={{ marginBottom: '0.25rem' }} {...props} />,
+                          // Space out paragraphs
+                          p: ({node, ...props}) => <p style={{ marginBottom: '0.75rem' }} {...props} />,
+                          // Format tables
+                          table: ({node, ...props}) => <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '1rem', marginBottom: '1rem' }} {...props} />,
+                          th: ({node, ...props}) => <th style={{ border: '1px solid #cbd5e1', padding: '8px 12px', backgroundColor: '#f8fafc', fontWeight: 'bold', textAlign: 'left' }} {...props} />,
+                          td: ({node, ...props}) => <td style={{ border: '1px solid #cbd5e1', padding: '8px 12px', textAlign: 'left' }} {...props} />,
+                          // Highlight safety warnings as red blocks
+                          blockquote: ({node, ...props}) => (
+                            <blockquote style={{ 
+                              borderLeft: '4px solid #ef4444', 
+                              backgroundColor: '#fef2f2', 
+                              padding: '8px 16px', 
+                              margin: '1rem 0', 
+                              borderRadius: '0 4px 4px 0', 
+                              color: '#991b1b', 
+                              fontWeight: '500' 
+                            }} {...props} />
+                          )
+                        }}
+                      >
+                        {msg.text}
+                      </ReactMarkdown>
+                  )}
                 </div>
 
                 {/* Grounding Metadata / Token Receipts for AI Responses */}
