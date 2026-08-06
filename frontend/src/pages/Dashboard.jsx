@@ -9,7 +9,6 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
-  ReferenceLine,
 } from 'recharts';
 import Form4Warning from '../components/Form4Warning';
 import { fetchJsonWithAuth } from '../utils/api';
@@ -25,6 +24,13 @@ const toNumber = (value) => {
 const formatNumber = (value, decimals = 3) => {
   const parsed = toNumber(value);
   return parsed === null ? '-' : parsed.toFixed(decimals);
+};
+
+const formatPercentOfThreshold = (score, threshold) => {
+  const s = toNumber(score);
+  const t = toNumber(threshold);
+  if (s === null || t === null || t === 0) return null;
+  return Math.round((s / t) * 100);
 };
 
 const formatTime = (timestamp) => {
@@ -164,28 +170,15 @@ const Dashboard = () => {
         timestampLabel: `Point ${idx + 1}`,
         fullTime: `Fallback Point ${idx + 1}`,
         actualCurrent: val,
-        baselineCurrent: val,
       }));
     }
 
-    const rawSeries = telemetry.map((row) => {
+    return telemetry.map((row) => {
       const actual = toNumber(row.impeller_ampere);
       return {
         timestampLabel: formatDateTick(row.timestamp),
         fullTime: formatFullDateTime(row.timestamp),
         actualCurrent: actual !== null ? Number(actual.toFixed(2)) : null,
-      };
-    });
-
-    return rawSeries.map((item, idx, arr) => {
-      const start = Math.max(0, idx - 4);
-      const windowSlice = arr.slice(start, idx + 1).map((d) => d.actualCurrent).filter((v) => v !== null);
-      const baseline = windowSlice.length
-        ? windowSlice.reduce((sum, v) => sum + v, 0) / windowSlice.length
-        : item.actualCurrent;
-      return {
-        ...item,
-        baselineCurrent: baseline !== null ? Number(baseline.toFixed(2)) : null,
       };
     });
   }, [telemetry]);
@@ -295,7 +288,7 @@ const Dashboard = () => {
                 machineId: summary?.machine_id || 'PMA Granulator #01',
                 anomalyEventId: latestPrediction?.id || null,
                 prefill: latestPrediction
-                  ? `Latest prediction ${latestPrediction.severity}: score ${formatNumber(latestPrediction.reconstruction_error, 3)} against threshold ${formatNumber(latestPrediction.threshold, 3)}.`
+                  ? `Latest prediction ${latestPrediction.severity}: ${formatPercentOfThreshold(latestPrediction.reconstruction_error, latestPrediction.threshold) ?? '-'}% of alert threshold.`
                   : 'Maintenance follow-up for PMA Granulator monitoring review.',
               }}
               className="btn-secondary px-5 py-3 justify-center"
@@ -330,9 +323,9 @@ const Dashboard = () => {
                 <p className="font-bold text-[#051125]">{inferenceState.result.severity}</p>
               </div>
               <div>
-                <p className="font-bold uppercase text-[#45474d]">MAE / Threshold</p>
+                <p className="font-bold uppercase text-[#45474d]">Score vs Threshold</p>
                 <p className="font-bold text-[#051125]">
-                  {formatNumber(inferenceState.result.reconstruction_error, 3)} / {formatNumber(inferenceState.result.threshold, 3)}
+                  {formatPercentOfThreshold(inferenceState.result.reconstruction_error, inferenceState.result.threshold) ?? '-'}% of threshold
                 </p>
               </div>
             </div>
@@ -369,10 +362,10 @@ const Dashboard = () => {
             <div>
               <h4 className="font-headline font-bold text-[#051125] flex items-center gap-2">
                 <span className="material-symbols-outlined text-[#051125]">electric_bolt</span>
-                Motor Current vs Rolling Baseline (24-Hour Stream)
+                Motor Current (24-Hour Stream)
               </h4>
               <p className="text-xs text-[#45474d] mt-1 font-body">
-                {currentUsesFallback ? 'Fallback values shown because backend current telemetry is unavailable' : '24-hour continuous telemetry stream with anomaly threshold reference'}
+                {currentUsesFallback ? 'Fallback values shown because backend current telemetry is unavailable' : '24-hour continuous motor current telemetry stream'}
               </p>
             </div>
           </div>
@@ -412,31 +405,14 @@ const Dashboard = () => {
                     labelFormatter={(label, payload) => payload?.[0]?.payload?.fullTime || label}
                   />
                   <Legend iconType="circle" wrapperStyle={{ paddingTop: '10px', fontSize: '11px', fontWeight: 'bold' }} />
-                  {threshold !== null && (
-                    <ReferenceLine
-                      y={threshold}
-                      stroke="#ba1a1a"
-                      strokeDasharray="4 4"
-                      label={{ value: `Threshold: ${threshold.toFixed(3)}`, fill: '#ba1a1a', fontSize: 10, position: 'top' }}
-                    />
-                  )}
                   <Line
                     type="monotone"
                     dataKey="actualCurrent"
-                    name="Actual Current (A)"
+                    name="Current (A)"
                     stroke="#1B263B"
                     strokeWidth={2}
                     dot={false}
                     activeDot={{ r: 4 }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="baselineCurrent"
-                    name="Rolling Baseline (A)"
-                    stroke="#64748b"
-                    strokeDasharray="4 4"
-                    strokeWidth={1.5}
-                    dot={false}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -456,12 +432,14 @@ const Dashboard = () => {
                 <circle className={latestPrediction?.is_anomaly ? 'text-[#ba1a1a]' : 'text-[#006d37]'} cx="50" cy="50" fill="transparent" r="40" stroke="currentColor" strokeDasharray="251.2" strokeDashoffset={gaugeOffset} strokeLinecap="round" strokeWidth="8"></circle>
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-4xl font-extrabold font-headline text-[#051125]">{formatNumber(anomalyScore, 3)}</span>
+                <span className="text-4xl font-extrabold font-headline text-[#051125]">
+                  {formatPercentOfThreshold(anomalyScore, threshold) ?? '-'}%
+                </span>
                 <span className="text-[10px] font-bold uppercase tracking-widest text-[#45474d]">{latestPrediction?.severity || 'No score'}</span>
               </div>
             </div>
             <p className="text-[10px] text-center text-[#45474d] mt-4 leading-relaxed">
-              LSTM Autoencoder score is unsupervised anomaly detection, not a remaining-life prediction. Threshold: {threshold === null ? '-' : threshold.toFixed(3)}
+              Score shown as % of the alert threshold. 100% = threshold reached, 150%+ = critical. Unsupervised anomaly detection, not a remaining-life prediction.
             </p>
           </div>
           <div className="mt-6 pt-6 border-t border-[#c5c6cd]/10 flex items-center justify-between">
