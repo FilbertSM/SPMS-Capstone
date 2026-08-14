@@ -180,3 +180,63 @@ class SystemStatusResponse(BaseModel):
     threshold: ThresholdSettingResponse
     audit_chain: dict[str, Any]
     telemetry_source: dict[str, Any]
+
+
+class TelegramLinkTokenResponse(BaseModel):
+    token: str
+    deep_link: str
+    expires_at: datetime
+
+
+class TelegramStatusResponse(BaseModel):
+    linked: bool
+    linked_at: datetime | None = None
+    notifications_enabled: bool
+
+
+class TelegramNotificationToggle(BaseModel):
+    enabled: bool
+
+
+class UserNotificationEligibility(BaseModel):
+    id: int
+    full_name: str
+    email: str
+    role: str
+    notify_eligible: bool
+    telegram_linked: bool
+    telegram_notifications_enabled: bool
+
+
+class NotificationEligibilityUpdate(BaseModel):
+    notify_eligible: bool
+
+
+class NotificationSettingResponse(BaseModel):
+    enabled: bool
+    min_severity: str
+    reason: str | None = None
+    updated_by: str | None = None
+    updated_at: datetime | None = None
+
+
+class NotificationSettingUpdate(BaseModel):
+    enabled: bool
+    min_severity: str = Field(..., pattern="^(warning|critical)$")
+    reason: str = Field(..., min_length=3, max_length=1000)
+
+
+class NotificationLogResponse(BaseModel):
+    id: int
+    anomaly_event_id: int
+    user_id: int
+    user_email: str
+    channel: str
+    status: str
+    severity: str | None = None
+    machine_id: str | None = None
+    error_detail: str | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

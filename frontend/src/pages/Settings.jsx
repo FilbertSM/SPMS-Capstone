@@ -215,41 +215,7 @@ export default function Settings() {
           </div>
         </section>
 
-        <section className="panel-card col-span-12 lg:col-span-5">
-          <Form4Warning className="mb-6">
-            Notification rules are display-only in this scope.
-          </Form4Warning>
-          <div className="flex items-center gap-3 mb-8">
-            <span className="material-symbols-outlined text-[#1b263b] bg-[#f1f4f3] p-2 rounded-lg">
-              mail
-            </span>
-            <div>
-              <h3 className="heading-secondary">Notification Rules</h3>
-              <p className="text-subtitle">No alert routing service is connected.</p>
-            </div>
-          </div>
-
-          <div className="space-y-5">
-            {['Critical anomaly alerts', 'Warning anomaly notifications', 'Sensor offline event', 'Weekly monitoring summary'].map((label) => (
-              <div key={label} className="flex items-center justify-between py-2 border-b border-[#c5c6cd]/10 last:border-b-0">
-                <div>
-                  <p className="text-[13px] font-bold text-[#1b263b]">{label}</p>
-                  <p className="text-[11px] text-[#45474d]">Manual workflow in current demo</p>
-                </div>
-                <button
-                  type="button"
-                  disabled
-                  title="Notification settings are not implemented in this demo"
-                  className="w-11 h-6 bg-[#e0e3e2] rounded-full cursor-not-allowed relative opacity-70"
-                >
-                  <span className="absolute top-1 left-1 bg-white rounded-full h-4 w-4"></span>
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="panel-card col-span-12 lg:col-span-7">
+        <section className="panel-card col-span-12">
           <Form4Warning className="mb-6">
             User administration is outside this implementation.
           </Form4Warning>

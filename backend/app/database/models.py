@@ -13,8 +13,14 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     email_notifications = Column(Boolean, default=True)
-    reset_otp = Column(String(6), nullable=True) 
+    reset_otp = Column(String(6), nullable=True)
     reset_otp_expire = Column(DateTime(timezone=True), nullable=True)
+    telegram_chat_id = Column(String(64), nullable=True, unique=True, index=True)
+    telegram_linked_at = Column(DateTime(timezone=True), nullable=True)
+    telegram_link_token = Column(String(64), nullable=True, unique=True, index=True)
+    telegram_link_token_expires = Column(DateTime(timezone=True), nullable=True)
+    telegram_notifications_enabled = Column(Boolean, default=False)
+    notify_eligible = Column(Boolean, default=False)
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
@@ -92,3 +98,19 @@ class RuntimeSetting(Base):
     reason = Column(Text, nullable=True)
     updated_by = Column(String(255), nullable=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class NotificationLog(Base):
+    __tablename__ = "notification_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    anomaly_event_id = Column(Integer, index=True, nullable=False)
+    user_id = Column(Integer, index=True, nullable=False)
+    user_email = Column(String(255), nullable=False)
+    channel = Column(String(20), default="telegram", index=True)
+    status = Column(String(20), index=True, nullable=False)
+    severity = Column(String(30), nullable=True)
+    machine_id = Column(String(100), nullable=True)
+    error_detail = Column(Text, nullable=True)
+    telegram_message_id = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)

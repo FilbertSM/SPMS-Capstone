@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     MAIL_SERVER: str = "smtp.gmail.com"
     MAIL_FROM_NAME: str = "SPMS Admin"
 
+    # Telegram alert notifications
+    TELEGRAM_BOT_TOKEN: str | None = None
+    TELEGRAM_BOT_USERNAME: str = "spms_alerts_bot"
+    TELEGRAM_POLL_TIMEOUT_SECONDS: int = 30
+
     class Config:
         env_file = ".env"
         case_sensitive = True

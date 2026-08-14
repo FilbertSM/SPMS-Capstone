@@ -37,8 +37,11 @@ const AuditLogs = () => {
 
   // Filter Logic
   const filteredLogs = logs.filter(log => {
-    const matchesSearch = log.user_email?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                         log.action?.toLowerCase().includes(searchTerm.toLowerCase());
+    const searchLower = searchTerm.toLowerCase();
+    const matchesSearch = log.user_email?.toLowerCase().includes(searchLower) || 
+                          log.action?.toLowerCase().includes(searchLower) ||
+                          log.id?.toString().includes(searchTerm);
+
     const matchesDate = dateFilter ? log.timestamp.includes(dateFilter) : true;
     return matchesSearch && matchesDate;
   });
@@ -143,7 +146,7 @@ const AuditLogs = () => {
           <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xl">search</span>
           <input 
             type="text" 
-            placeholder="Search by User or Action..." 
+            placeholder="Search by ID, User, or Action..." 
             className="w-full pl-10 pr-4 py-2.5 bg-white border border-[#c5c6cd]/40 rounded-lg focus:ring-2 focus:ring-[#1b263b]/10 outline-none transition-all text-sm"
             value={searchTerm}
             onChange={(e) => {
@@ -229,6 +232,7 @@ const AuditLogs = () => {
         <table className="min-w-[860px] w-full text-left border-collapse">
           <thead>
             <tr className="bg-[#f8faf9] border-b border-[#c5c6cd]/30">
+              <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-[#75777d]">ID</th>
               <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-[#75777d]">Temporal Data (UTC)</th>
               <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-[#75777d]">Identity Provider</th>
               <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-[#75777d]">Security Event</th>
@@ -239,48 +243,74 @@ const AuditLogs = () => {
           </thead>
           <tbody className="divide-y divide-[#ebeeed]">
             {isLoading ? (
-              <tr><td colSpan={showHashColumn ? "6" : "5"} className="text-center py-20 text-sm text-[#75777d] italic">Loading audit logs...</td></tr>
+              <tr><td colSpan={showHashColumn ? "7" : "6"} className="text-center py-20 text-sm text-[#75777d] italic">Loading audit logs...</td></tr>
             ) : currentLogs.length === 0 ? (
-              <tr><td colSpan={showHashColumn ? "6" : "5"} className="text-center py-20 text-sm text-[#75777d]">No audit events found matching current filters.</td></tr>
+              <tr><td colSpan={showHashColumn ? "7" : "6"} className="text-center py-20 text-sm text-[#75777d]">No audit events found matching current filters.</td></tr>
             ) : (
-              currentLogs.map((log) => (
-                <tr key={log.id} className="hover:bg-[#f9fafb] transition-colors group">
-                  <td className="px-6 py-5">
-                    <p className="text-[11px] font-bold text-[#1b263b]">{new Date(log.timestamp).toLocaleDateString()}</p>
-                    <p className="text-[10px] text-[#75777d] font-mono mt-0.5">{new Date(log.timestamp).toLocaleTimeString()}</p>
-                  </td>
-                  <td className="px-6 py-5">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded bg-[#f1f4f3] flex items-center justify-center text-[#1b263b] font-bold text-[10px] border border-[#c5c6cd]/30">
-                        {log.user_email?.substring(0, 2).toUpperCase()}
-                      </div>
-                      <p className="text-xs font-bold text-[#1b263b]">{log.user_email || 'System/Anonymous'}</p>
-                    </div>
-                  </td>
-                  <td className="px-6 py-5">
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-sm bg-[#1b263b]/5 text-[#1b263b] text-[9px] font-black uppercase tracking-wider border border-[#1b263b]/10">
-                      {log.action}
-                    </span>
-                  </td>
-                  <td className="px-6 py-5">
-                    <p className="text-xs font-mono font-medium text-[#45474d]">{log.ip_address}</p>
-                  </td>
-                  <td className="px-6 py-5">
-                    <span className={`inline-flex items-center px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${
-                      log.status === 'SUCCESS' ? 'bg-[#2ecc71]/10 text-[#00743a]' : 'bg-[#e74c3c]/10 text-[#e74c3c]'
-                    }`}>
-                      {log.status}
-                    </span>
-                  </td>
-                  {showHashColumn && (
+              currentLogs.map((log) => {
+                const isCompromised = verificationResult?.invalid_log_ids?.includes(log.id);
+
+                return (
+                  <tr 
+                    key={log.id} 
+                    className={`transition-colors group ${
+                      isCompromised 
+                        ? 'bg-[#ffdad6]/40 border-l-4 border-l-[#ba1a1a] hover:bg-[#ffdad6]/60' 
+                        : 'hover:bg-[#f9fafb]'
+                    }`}
+                  >
                     <td className="px-6 py-5">
-                      <span className="font-mono text-[10px] text-[#45474d] bg-[#f1f4f3] px-2 py-1 rounded border border-[#c5c6cd]/50 shadow-inner">
-                        {hashPreview(log.record_hash)}
+                      <span className={`text-xs font-mono font-bold ${isCompromised ? 'text-[#ba1a1a]' : 'text-[#1b263b]'}`}>
+                        #{log.id}
                       </span>
                     </td>
-                  )}
-                </tr>
-              ))
+                    <td className="px-6 py-5">
+                      <p className={`text-[11px] font-bold ${isCompromised ? 'text-[#ba1a1a]' : 'text-[#1b263b]'}`}>
+                        {new Date(log.timestamp).toLocaleDateString()}
+                      </p>
+                      <p className={`text-[10px] font-mono mt-0.5 ${isCompromised ? 'text-[#ba1a1a]/70' : 'text-[#75777d]'}`}>
+                        {new Date(log.timestamp).toLocaleTimeString()}
+                      </p>
+                    </td>
+                    <td className="px-6 py-5">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-8 h-8 rounded flex items-center justify-center font-bold text-[10px] border ${isCompromised ? 'bg-[#ba1a1a]/10 text-[#ba1a1a] border-[#ba1a1a]/30' : 'bg-[#f1f4f3] text-[#1b263b] border-[#c5c6cd]/30'}`}>
+                          {log.user_email?.substring(0, 2).toUpperCase()}
+                        </div>
+                        <p className={`text-xs font-bold ${isCompromised ? 'text-[#ba1a1a]' : 'text-[#1b263b]'}`}>
+                          {log.user_email || 'System/Anonymous'}
+                        </p>
+                      </div>
+                    </td>
+                    <td className="px-6 py-5">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-sm text-[9px] font-black uppercase tracking-wider border ${isCompromised ? 'bg-[#ba1a1a]/10 text-[#ba1a1a] border-[#ba1a1a]/20' : 'bg-[#1b263b]/5 text-[#1b263b] border-[#1b263b]/10'}`}>
+                        {log.action}
+                      </span>
+                    </td>
+                    <td className="px-6 py-5">
+                      <p className={`text-xs font-mono font-medium ${isCompromised ? 'text-[#ba1a1a]' : 'text-[#45474d]'}`}>
+                        {log.ip_address}
+                      </p>
+                    </td>
+                    <td className="px-6 py-5">
+                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                        log.status === 'SUCCESS' 
+                          ? isCompromised ? 'bg-[#ba1a1a]/20 text-[#ba1a1a]' : 'bg-[#2ecc71]/10 text-[#00743a]' 
+                          : 'bg-[#e74c3c]/10 text-[#e74c3c]'
+                      }`}>
+                        {log.status}
+                      </span>
+                    </td>
+                    {showHashColumn && (
+                      <td className="px-6 py-5">
+                        <span className={`font-mono text-[10px] px-2 py-1 rounded border shadow-inner ${isCompromised ? 'text-[#ba1a1a] bg-[#ffdad6]/50 border-[#ba1a1a]/50' : 'text-[#45474d] bg-[#f1f4f3] border-[#c5c6cd]/50'}`}>
+                          {hashPreview(log.record_hash)}
+                        </span>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>

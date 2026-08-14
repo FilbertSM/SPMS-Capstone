@@ -22,11 +22,127 @@ const AdminDashboard = () => {
   const currentUserRole = localStorage.getItem('role') || 'technician';
   const isSuperAdmin = currentUserRole.toLowerCase() === 'super_admin';
 
+  // --- STATE FOR NOTIFICATIONS TAB ---
+  const [eligibilityList, setEligibilityList] = useState([]);
+  const [eligibilityLoading, setEligibilityLoading] = useState(true);
+  const [eligibilityError, setEligibilityError] = useState(null);
+  const [eligibilitySavingId, setEligibilitySavingId] = useState(null);
+  const [historyList, setHistoryList] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState(null);
+  const [historyStatusFilter, setHistoryStatusFilter] = useState('all');
+  const [historyChannelFilter, setHistoryChannelFilter] = useState('all');
+  const [notifSettings, setNotifSettings] = useState(null);
+  const [notifSettingsLoading, setNotifSettingsLoading] = useState(true);
+  const [notifSettingsError, setNotifSettingsError] = useState(null);
+  const [notifSettingsSuccess, setNotifSettingsSuccess] = useState(null);
+  const [notifEnabledDraft, setNotifEnabledDraft] = useState(false);
+  const [notifSeverityDraft, setNotifSeverityDraft] = useState('critical');
+  const [notifReasonDraft, setNotifReasonDraft] = useState('');
+  const [notifSettingsSaving, setNotifSettingsSaving] = useState(false);
+
+  const loadNotifSettings = async () => {
+    setNotifSettingsLoading(true);
+    try {
+      const data = await fetchJsonWithAuth('/api/settings/notifications');
+      setNotifSettings(data);
+      setNotifEnabledDraft(Boolean(data.enabled));
+      setNotifSeverityDraft(data.min_severity || 'critical');
+      setNotifReasonDraft(data.reason || '');
+      setNotifSettingsError(null);
+    } catch (err) {
+      setNotifSettingsError(err.message || 'Failed to load notification settings.');
+    } finally {
+      setNotifSettingsLoading(false);
+    }
+  };
+
+  const saveNotifSettings = async (event) => {
+    event.preventDefault();
+    setNotifSettingsSaving(true);
+    setNotifSettingsError(null);
+    setNotifSettingsSuccess(null);
+    try {
+      const payload = await fetchJsonWithAuth('/api/settings/notifications', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          enabled: notifEnabledDraft,
+          min_severity: notifSeverityDraft,
+          reason: notifReasonDraft,
+        }),
+      });
+      setNotifSettings(payload);
+      setNotifSettingsSuccess('Telegram notification settings saved and audited.');
+    } catch (err) {
+      setNotifSettingsError(err.message);
+    } finally {
+      setNotifSettingsSaving(false);
+    }
+  };
+
+  const loadEligibility = async () => {
+    setEligibilityLoading(true);
+    try {
+      const data = await fetchJsonWithAuth('/api/admin/notification-eligibility');
+      setEligibilityList(data);
+      setEligibilityError(null);
+    } catch (err) {
+      setEligibilityError(err.message || 'Failed to load notification eligibility.');
+    } finally {
+      setEligibilityLoading(false);
+    }
+  };
+
+  const loadHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (historyStatusFilter !== 'all') params.set('status_filter', historyStatusFilter);
+      if (historyChannelFilter !== 'all') params.set('channel', historyChannelFilter);
+      const data = await fetchJsonWithAuth(`/api/notifications/history?${params.toString()}`);
+      setHistoryList(data);
+      setHistoryError(null);
+    } catch (err) {
+      setHistoryError(err.message || 'Failed to load notification history.');
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const toggleEligibility = async (user) => {
+    setEligibilitySavingId(user.id);
+    try {
+      const updated = await fetchJsonWithAuth(`/api/admin/notification-eligibility/${user.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ notify_eligible: !user.notify_eligible }),
+      });
+      setEligibilityList((current) => current.map((row) => (row.id === updated.id ? updated : row)));
+    } catch (err) {
+      alert('Failed to update eligibility: ' + err.message);
+    } finally {
+      setEligibilitySavingId(null);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'users') {
       loadUsers();
+    } else if (activeTab === 'notifications') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      loadNotifSettings();
+      loadEligibility();
+      loadHistory();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab === 'notifications') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      loadHistory();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyStatusFilter, historyChannelFilter]);
 
   const loadUsers = async () => {
     setIsLoading(true);
@@ -140,6 +256,15 @@ const AdminDashboard = () => {
             <span className="material-symbols-outlined text-[18px]">tune</span>
             System Settings
           </button>
+          <button
+            onClick={() => setActiveTab('notifications')}
+            className={`pb-4 text-sm font-bold flex items-center gap-2 transition-all border-b-2 ${
+              activeTab === 'notifications' ? 'text-[#1b263b] border-[#1b263b]' : 'text-[#75777d] border-transparent hover:text-[#1b263b]'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[18px]">notifications_active</span>
+            Notifications
+          </button>
         </div>
       </div>
 
@@ -251,6 +376,230 @@ const AdminDashboard = () => {
           </div>
         ) : activeTab === 'audit' ? (
           <AuditLogs />
+        ) : activeTab === 'notifications' ? (
+          <div className="p-8 h-full overflow-y-auto space-y-8">
+            <div className="bg-white rounded-xl shadow-sm border border-[#c5c6cd]/20 p-6">
+              <div className="flex items-center justify-between gap-3 mb-6">
+                <div className="flex items-center gap-3">
+                  <span className="material-symbols-outlined text-[#1b263b] bg-[#f1f4f3] p-2 rounded-lg">
+                    mail
+                  </span>
+                  <div>
+                    <h3 className="heading-secondary">Notification Rules</h3>
+                    <p className="text-subtitle">Alert-triggered Telegram notifications, Telegram-only in this scope.</p>
+                  </div>
+                </div>
+                <span className={`inline-flex w-fit items-center rounded-md px-3 py-2 text-[10px] font-black uppercase tracking-widest ${notifSettings?.enabled ? 'bg-[#e8f5e9] text-[#00743a]' : 'bg-[#fff4ce] text-[#805600]'}`}>
+                  {notifSettingsLoading ? 'Loading...' : notifSettings?.enabled ? 'Enabled' : 'Disabled'}
+                </span>
+              </div>
+
+              {notifSettingsError && (
+                <div className="bg-[#ffdad6] border border-[#ba1a1a]/20 text-[#ba1a1a] rounded-lg px-4 py-3 text-sm font-bold mb-4">
+                  {notifSettingsError}
+                </div>
+              )}
+              {notifSettingsSuccess && (
+                <div className="bg-[#e8f5e9] border border-[#006d37]/20 text-[#006d37] rounded-lg px-4 py-3 text-sm font-bold mb-4">
+                  {notifSettingsSuccess}
+                </div>
+              )}
+
+              <form onSubmit={saveNotifSettings} className="rounded-lg border border-[#c5c6cd]/30 bg-[#f7faf9] p-5 space-y-4">
+                <div className="flex items-center justify-between py-2 border-b border-[#c5c6cd]/10">
+                  <div>
+                    <p className="text-[13px] font-bold text-[#1b263b]">Send Telegram alerts</p>
+                    <p className="text-[11px] text-[#45474d]">Master switch for alert-triggered notifications.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setNotifEnabledDraft((current) => !current)}
+                    className={`w-12 h-6 rounded-full relative flex items-center transition-colors shrink-0 ${notifEnabledDraft ? 'bg-[#2ecc71]' : 'bg-[#e0e3e2]'}`}
+                  >
+                    <div className={`w-4 h-4 bg-white rounded-full absolute transition-transform ${notifEnabledDraft ? 'translate-x-7' : 'translate-x-1'}`}></div>
+                  </button>
+                </div>
+
+                <div>
+                  <label className="form-label mb-2">Minimum Severity</label>
+                  <select
+                    value={notifSeverityDraft}
+                    onChange={(event) => setNotifSeverityDraft(event.target.value)}
+                    className="input-field bg-white"
+                  >
+                    <option value="warning">Warning and above</option>
+                    <option value="critical">Critical only</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="form-label mb-2">Audit Reason</label>
+                  <input
+                    value={notifReasonDraft}
+                    onChange={(event) => setNotifReasonDraft(event.target.value)}
+                    minLength={3}
+                    className="input-field bg-white"
+                    placeholder="Reason for this change"
+                    required
+                  />
+                </div>
+
+                <div className="flex justify-end">
+                  <button type="submit" disabled={notifSettingsSaving} className="btn-primary px-5 py-2.5 mt-0 disabled:opacity-60">
+                    <span className="material-symbols-outlined text-[18px]">save</span>
+                    Save Notification Settings
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <div>
+              <h2 className="heading-primary text-xl flex items-center gap-3 text-[#1b263b]">
+                <span className="material-symbols-outlined text-2xl">how_to_reg</span>
+                Notification Eligibility
+              </h2>
+              <p className="text-subtitle mt-1">Grant or revoke which personnel are allowed to receive Telegram alert notifications. Each user still links and enables their own Telegram account from their profile.</p>
+            </div>
+
+            {eligibilityError && (
+              <div className="p-4 bg-[#ba1a1a]/10 border border-[#ba1a1a]/20 text-[#ba1a1a] rounded-lg text-sm font-bold flex items-center gap-3">
+                <span className="material-symbols-outlined">report</span> {eligibilityError}
+              </div>
+            )}
+
+            <div className="bg-white rounded-xl shadow-sm border border-[#c5c6cd]/20 overflow-x-auto">
+              <table className="min-w-full w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-[#f8faf9] border-b border-[#c5c6cd]/30">
+                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-[#75777d]">Personnel Name</th>
+                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-[#75777d]">Email Address</th>
+                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-[#75777d]">Role</th>
+                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-[#75777d]">Telegram Linked</th>
+                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-[#75777d] text-right">Eligible</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#ebeeed]">
+                  {eligibilityLoading ? (
+                    <tr><td colSpan="5" className="text-center py-20 text-sm text-[#75777d] italic">Loading...</td></tr>
+                  ) : eligibilityList.length === 0 ? (
+                    <tr><td colSpan="5" className="text-center py-20 text-sm text-[#75777d]">No users found.</td></tr>
+                  ) : (
+                    eligibilityList.map((row) => (
+                      <tr key={row.id} className="hover:bg-[#f9fafb] transition-colors">
+                        <td className="px-6 py-4 text-xs font-bold text-[#1b263b]">{row.full_name}</td>
+                        <td className="px-6 py-4 text-xs font-medium text-[#45474d]">{row.email}</td>
+                        <td className="px-6 py-4">
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest bg-[#e0e3e2] text-[#45474d]">
+                            {row.role}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex items-center px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                            row.telegram_linked ? 'bg-[#2ecc71]/10 text-[#00743a]' : 'bg-[#e0e3e2] text-[#45474d]'
+                          }`}>
+                            {row.telegram_linked ? 'Linked' : 'Not linked'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => toggleEligibility(row)}
+                              disabled={eligibilitySavingId === row.id}
+                              className={`w-12 h-6 rounded-full relative flex items-center transition-colors disabled:opacity-60 shrink-0 ${row.notify_eligible ? 'bg-[#2ecc71]' : 'bg-[#e0e3e2]'}`}
+                              title="Toggle notification eligibility"
+                            >
+                              <div className={`w-4 h-4 bg-white rounded-full absolute transition-transform ${row.notify_eligible ? 'translate-x-7' : 'translate-x-1'}`}></div>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div>
+              <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-4">
+                <div>
+                  <h2 className="heading-primary text-xl flex items-center gap-3 text-[#1b263b]">
+                    <span className="material-symbols-outlined text-2xl">history</span>
+                    Delivery History
+                  </h2>
+                  <p className="text-subtitle mt-1">Recent alert notification delivery attempts.</p>
+                </div>
+                <div className="flex gap-3">
+                  <select
+                    value={historyStatusFilter}
+                    onChange={(e) => setHistoryStatusFilter(e.target.value)}
+                    className="border border-[#c5c6cd] rounded-lg px-3 py-2 text-sm text-[#1b263b] focus:outline-none focus:border-[#1b263b]"
+                  >
+                    <option value="all">All statuses</option>
+                    <option value="sent">Sent</option>
+                    <option value="failed">Failed</option>
+                  </select>
+                  <select
+                    value={historyChannelFilter}
+                    onChange={(e) => setHistoryChannelFilter(e.target.value)}
+                    className="border border-[#c5c6cd] rounded-lg px-3 py-2 text-sm text-[#1b263b] focus:outline-none focus:border-[#1b263b]"
+                  >
+                    <option value="all">All channels</option>
+                    <option value="telegram">Telegram</option>
+                  </select>
+                </div>
+              </div>
+
+              {historyError && (
+                <div className="p-4 mb-4 bg-[#ba1a1a]/10 border border-[#ba1a1a]/20 text-[#ba1a1a] rounded-lg text-sm font-bold flex items-center gap-3">
+                  <span className="material-symbols-outlined">report</span> {historyError}
+                </div>
+              )}
+
+              <div className="bg-white rounded-xl shadow-sm border border-[#c5c6cd]/20 overflow-x-auto">
+                <table className="min-w-full w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-[#f8faf9] border-b border-[#c5c6cd]/30">
+                      <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-[#75777d]">Timestamp</th>
+                      <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-[#75777d]">Machine / Severity</th>
+                      <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-[#75777d]">Recipient</th>
+                      <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-[#75777d]">Channel</th>
+                      <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-[#75777d]">Status</th>
+                      <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-[#75777d]">Error</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#ebeeed]">
+                    {historyLoading ? (
+                      <tr><td colSpan="6" className="text-center py-20 text-sm text-[#75777d] italic">Loading...</td></tr>
+                    ) : historyList.length === 0 ? (
+                      <tr><td colSpan="6" className="text-center py-20 text-sm text-[#75777d]">No notification deliveries recorded yet.</td></tr>
+                    ) : (
+                      historyList.map((row) => (
+                        <tr key={row.id} className="hover:bg-[#f9fafb] transition-colors">
+                          <td className="px-6 py-4 text-xs font-medium text-[#75777d]">
+                            {row.created_at ? new Date(row.created_at).toLocaleString('en-GB') : '-'}
+                          </td>
+                          <td className="px-6 py-4 text-xs font-medium text-[#45474d]">
+                            {row.machine_id || '-'} <span className="uppercase text-[9px] font-black text-[#75777d]">({row.severity || '-'})</span>
+                          </td>
+                          <td className="px-6 py-4 text-xs font-medium text-[#45474d]">{row.user_email}</td>
+                          <td className="px-6 py-4 text-xs font-medium text-[#45474d] capitalize">{row.channel}</td>
+                          <td className="px-6 py-4">
+                            <span className={`inline-flex items-center px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                              row.status === 'sent' ? 'bg-[#2ecc71]/10 text-[#00743a]' : 'bg-[#ba1a1a]/10 text-[#ba1a1a]'
+                            }`}>
+                              {row.status}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-xs font-medium text-[#ba1a1a]">{row.error_detail || '-'}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         ) : (
           <div className="h-full overflow-y-auto">
             <Settings />

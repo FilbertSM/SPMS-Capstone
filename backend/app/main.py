@@ -1,22 +1,26 @@
+import asyncio
 import re
 import csv
 import hashlib
 import io
 import json
-from datetime import datetime, timezone
+import secrets
+import time
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import urlencode
 
 import os
 import shutil
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from sqlalchemy import inspect, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 # --- USER IMPORTS RESTORED ---
@@ -40,7 +44,6 @@ from app.ml_integration.window_builder import (
     validate_prediction_window,
 )
 import random
-from datetime import timedelta
 
 from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel, EmailStr
@@ -75,75 +78,19 @@ conf = ConnectionConfig(
 )
 
 
-AUDIT_HASH_ALGORITHM = "SHA-256"
-AUDIT_HASH_PAYLOAD_VERSION = "audit-v1"
+from app.core.audit import (
+    AUDIT_HASH_ALGORITHM,
+    AUDIT_HASH_PAYLOAD_VERSION,
+    append_audit_log as _append_audit_log,
+    calculate_audit_hash as _calculate_audit_hash,
+    canonical_audit_payload as _canonical_audit_payload,
+    format_audit_timestamp as _format_audit_timestamp,
+    is_retryable_lock_error,
+)
+from app.services import telegram_service
+
 THRESHOLD_OVERRIDE_KEY = "anomaly_threshold_override"
 VALID_TICKET_STATUSES = {"OPEN", "IN_REVIEW", "RESOLVED"}
-
-
-def _format_audit_timestamp(value: datetime | None) -> str:
-    if value is None:
-        return ""
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat(timespec="microseconds")
-
-
-def _canonical_audit_payload(log: models.AuditLog) -> str:
-    payload = {
-        "id": log.id,
-        "timestamp": _format_audit_timestamp(log.timestamp),
-        "user_email": log.user_email or "",
-        "action": log.action or "",
-        "status": log.status or "",
-        "ip_address": log.ip_address or "",
-        "browser_info": log.browser_info or "",
-        "previous_hash": log.previous_hash or "",
-        "hash_algorithm": log.hash_algorithm or AUDIT_HASH_ALGORITHM,
-        "hash_payload_version": log.hash_payload_version or AUDIT_HASH_PAYLOAD_VERSION,
-    }
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
-
-
-def _calculate_audit_hash(log: models.AuditLog) -> str:
-    return hashlib.sha256(_canonical_audit_payload(log).encode("utf-8")).hexdigest()
-
-
-def _append_audit_log(
-    db: Session,
-    *,
-    user_email: str | None,
-    action: str,
-    status_value: str,
-    ip_address: str | None,
-    browser_info: str | None,
-) -> models.AuditLog:
-    previous = (
-        db.query(models.AuditLog)
-        .filter(models.AuditLog.record_hash.isnot(None))
-        .order_by(models.AuditLog.id.desc())
-        .with_for_update() 
-        .first()
-    )
-    
-    # Membuang microsecond agar sinkron dengan format default MariaDB
-    current_time = datetime.now(timezone.utc).replace(microsecond=0)
-
-    log = models.AuditLog(
-        timestamp=current_time,
-        user_email=user_email,
-        action=action,
-        status=status_value,  
-        ip_address=ip_address,
-        browser_info=browser_info,
-        previous_hash=previous.record_hash if previous else None,
-        hash_algorithm=AUDIT_HASH_ALGORITHM,
-        hash_payload_version=AUDIT_HASH_PAYLOAD_VERSION,
-    )
-    db.add(log)
-    db.flush()
-    log.record_hash = _calculate_audit_hash(log)
-    return log
 
 
 def _audit_context(request: Request) -> tuple[str, str]:
@@ -257,6 +204,35 @@ def _ensure_form4_workflow_columns() -> None:
         print(f"WARNING: Form 4 workflow column migration skipped: {exc}")
 
 
+def _ensure_notification_columns() -> None:
+    definitions = {
+        "telegram_chat_id": "VARCHAR(64)",
+        "telegram_linked_at": "DATETIME",
+        "telegram_link_token": "VARCHAR(64)",
+        "telegram_link_token_expires": "DATETIME",
+        "telegram_notifications_enabled": "BOOLEAN DEFAULT 0",
+        "notify_eligible": "BOOLEAN DEFAULT 0",
+    }
+
+    try:
+        inspector = inspect(engine)
+        existing = {column["name"] for column in inspector.get_columns("users")}
+    except SQLAlchemyError as exc:
+        print(f"WARNING: notification column inspection skipped: {exc}")
+        return
+
+    missing = [name for name in definitions if name not in existing]
+    if not missing:
+        return
+
+    try:
+        with engine.begin() as connection:
+            for column_name in missing:
+                connection.execute(text(f"ALTER TABLE users ADD COLUMN {column_name} {definitions[column_name]}"))
+    except SQLAlchemyError as exc:
+        print(f"WARNING: notification column migration skipped: {exc}")
+
+
 def _backfill_legacy_audit_hashes() -> None:
     db = SessionLocal()
     try:
@@ -279,11 +255,26 @@ def _backfill_legacy_audit_hashes() -> None:
         db.close()
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    telegram_listener_task = None
+    if settings.TELEGRAM_BOT_TOKEN:
+        telegram_listener_task = asyncio.create_task(telegram_service.run_link_listener_forever())
+    yield
+    if telegram_listener_task is not None:
+        telegram_listener_task.cancel()
+        try:
+            await telegram_listener_task
+        except asyncio.CancelledError:
+            pass
+
+
 def get_application() -> FastAPI:
     try:
         models.Base.metadata.create_all(bind=engine)
         _ensure_audit_log_hash_columns()
         _ensure_form4_workflow_columns()
+        _ensure_notification_columns()
         _backfill_legacy_audit_hashes()
     except SQLAlchemyError as exc:
         print(f"WARNING: database table initialization skipped: {exc}")
@@ -293,6 +284,7 @@ def get_application() -> FastAPI:
         openapi_url=f"{settings.API_V1_STR}/openapi.json",
         description="Secure Predictive Maintenance System API",
         version="1.0.0",
+        lifespan=_lifespan,
     )
 
     cors_origins = [str(origin).rstrip("/") for origin in settings.BACKEND_CORS_ORIGINS]
@@ -319,6 +311,9 @@ def get_db():
         db.close()
 
 
+_AUDIT_DEADLOCK_RETRY_ATTEMPTS = 3
+
+
 def _record_audit_log(
     db: Session,
     *,
@@ -326,17 +321,38 @@ def _record_audit_log(
     user_email: str | None,
     action: str,
     status_value: str,
+    retry_on_deadlock: bool = False,
 ):
+    """Write one audit entry (and commit it).
+
+    `retry_on_deadlock=True` opts into retrying the whole append-and-commit on a
+    MariaDB deadlock/lock-timeout (a full `db.rollback()` between attempts, which
+    is how InnoDB deadlock recovery actually works - it aborts the entire victim
+    transaction, not just the losing statement). Only pass this where the audit
+    call is provably the only pending write in the session (e.g. a read-only
+    "VIEW" action, or a mutation that was already committed earlier in the same
+    request) - otherwise the rollback would silently discard whatever else was
+    pending, while the retried audit entry still reports SUCCESS.
+    """
     client_ip, user_agent = _audit_context(request)
-    _append_audit_log(
-        db,
-        user_email=user_email,
-        action=action,
-        status_value=status_value,
-        ip_address=client_ip,
-        browser_info=user_agent,
-    )
-    db.commit()
+    attempts = _AUDIT_DEADLOCK_RETRY_ATTEMPTS if retry_on_deadlock else 1
+    for attempt in range(1, attempts + 1):
+        try:
+            _append_audit_log(
+                db,
+                user_email=user_email,
+                action=action,
+                status_value=status_value,
+                ip_address=client_ip,
+                browser_info=user_agent,
+            )
+            db.commit()
+            return
+        except OperationalError as exc:
+            db.rollback()
+            if attempt >= attempts or not is_retryable_lock_error(exc):
+                raise
+            time.sleep(0.05 * attempt)
 
 
 @app.get("/")
@@ -491,7 +507,7 @@ def register_user(request: Request, user_data: schemas.UserCreateWithOTP, db: Se
 
     del pending_registration_otps[normalized_email]
 
-    _record_audit_log(db, request=request, user_email=new_user.email, action="USER_REGISTER", status_value="SUCCESS")
+    _record_audit_log(db, request=request, user_email=new_user.email, action="USER_REGISTER", status_value="SUCCESS", retry_on_deadlock=True)
     return new_user
 
 @app.post("/api/login", response_model=schemas.Token)
@@ -848,6 +864,95 @@ def update_user_preferences(
         "email_notifications": current_user.email_notifications,
     }
 
+
+TELEGRAM_LINK_TOKEN_TTL_MINUTES = 15
+
+
+def _telegram_status(user: models.User) -> schemas.TelegramStatusResponse:
+    return schemas.TelegramStatusResponse(
+        linked=user.telegram_chat_id is not None,
+        linked_at=user.telegram_linked_at,
+        notifications_enabled=bool(user.telegram_notifications_enabled),
+    )
+
+
+@app.post("/api/users/me/telegram/link-token", response_model=schemas.TelegramLinkTokenResponse)
+def issue_telegram_link_token(
+    request: Request,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    token = secrets.token_urlsafe(24)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=TELEGRAM_LINK_TOKEN_TTL_MINUTES)
+    current_user.telegram_link_token = token
+    current_user.telegram_link_token_expires = expires_at
+
+    _record_audit_log(
+        db,
+        request=request,
+        user_email=current_user.email,
+        action="TELEGRAM_LINK_TOKEN_ISSUED",
+        status_value="SUCCESS",
+    )
+    db.commit()
+
+    deep_link = f"https://t.me/{settings.TELEGRAM_BOT_USERNAME}?start={token}"
+    return schemas.TelegramLinkTokenResponse(token=token, deep_link=deep_link, expires_at=expires_at)
+
+
+@app.get("/api/users/me/telegram/status", response_model=schemas.TelegramStatusResponse)
+def read_telegram_status(current_user: models.User = Depends(get_current_user)):
+    return _telegram_status(current_user)
+
+
+@app.patch("/api/users/me/telegram/notifications", response_model=schemas.TelegramStatusResponse)
+def update_telegram_notifications(
+    request: Request,
+    body: schemas.TelegramNotificationToggle,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.telegram_chat_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Link Telegram before enabling notifications.")
+
+    current_user.telegram_notifications_enabled = body.enabled
+
+    _record_audit_log(
+        db,
+        request=request,
+        user_email=current_user.email,
+        action="TELEGRAM_NOTIFICATIONS_TOGGLED",
+        status_value="SUCCESS",
+    )
+    db.commit()
+
+    return _telegram_status(current_user)
+
+
+@app.delete("/api/users/me/telegram/link", response_model=schemas.TelegramStatusResponse)
+def unlink_telegram(
+    request: Request,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    current_user.telegram_chat_id = None
+    current_user.telegram_linked_at = None
+    current_user.telegram_notifications_enabled = False
+    current_user.telegram_link_token = None
+    current_user.telegram_link_token_expires = None
+
+    _record_audit_log(
+        db,
+        request=request,
+        user_email=current_user.email,
+        action="TELEGRAM_UNLINKED",
+        status_value="SUCCESS",
+    )
+    db.commit()
+
+    return _telegram_status(current_user)
+
+
 class UserCreateByAdmin(BaseModel):
     full_name: str
     email: EmailStr
@@ -895,11 +1000,61 @@ def create_user_by_admin(
         db, 
         request=request, 
         user_email=current_user.email, 
-        action=f"ADMIN_CREATE_USER: {new_user.email}", 
-        status_value="SUCCESS"
+        action=f"ADMIN_CREATE_USER: {new_user.email}",
+        status_value="SUCCESS",
+        retry_on_deadlock=True,
     )
-    
+
     return new_user
+
+
+def _notification_eligibility_row(user: models.User) -> schemas.UserNotificationEligibility:
+    return schemas.UserNotificationEligibility(
+        id=user.id,
+        full_name=user.full_name,
+        email=user.email,
+        role=user.role,
+        notify_eligible=bool(user.notify_eligible),
+        telegram_linked=user.telegram_chat_id is not None,
+        telegram_notifications_enabled=bool(user.telegram_notifications_enabled),
+    )
+
+
+@app.get("/api/admin/notification-eligibility", response_model=list[schemas.UserNotificationEligibility])
+def list_notification_eligibility(
+    current_user: models.User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    users = db.query(models.User).filter(models.User.is_active.is_(True)).order_by(models.User.full_name).all()
+    return [_notification_eligibility_row(user) for user in users]
+
+
+@app.patch("/api/admin/notification-eligibility/{user_id}", response_model=schemas.UserNotificationEligibility)
+def update_notification_eligibility(
+    user_id: int,
+    request: Request,
+    body: schemas.NotificationEligibilityUpdate,
+    current_user: models.User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    user.notify_eligible = body.notify_eligible
+
+    _record_audit_log(
+        db,
+        request=request,
+        user_email=current_user.email,
+        action=f"NOTIFY_ELIGIBILITY_{'GRANTED' if body.notify_eligible else 'REVOKED'}: {user.email}",
+        status_value="SUCCESS",
+    )
+    db.commit()
+    db.refresh(user)
+
+    return _notification_eligibility_row(user)
+
 
 # ==========================================
 # --- AUDITED MAINTENANCE TICKET ENDPOINTS ---
@@ -951,6 +1106,7 @@ def get_maintenance_tickets(
         user_email=current_user.email,
         action="TICKETS_VIEW",
         status_value="SUCCESS",
+        retry_on_deadlock=True,
     )
 
     return db.query(models.MaintenanceTicket).order_by(models.MaintenanceTicket.timestamp.desc()).all()
@@ -1325,6 +1481,7 @@ def read_alerts(
         user_email=current_user.email,
         action="ALERTS_VIEW",
         status_value="SUCCESS",
+        retry_on_deadlock=True,
     )
 
     safe_limit = max(1, min(limit, 200))
@@ -1380,6 +1537,7 @@ def export_alerts(
         user_email=current_user.email,
         action="ALERT_REPORT_EXPORT",
         status_value="SUCCESS",
+        retry_on_deadlock=True,
     )
 
     alerts = (
@@ -1437,10 +1595,33 @@ def export_alerts(
     return response
 
 
+def _format_alert_notification_text(*, machine_id: str, severity: str, prediction: dict) -> str:
+    threshold = float(prediction["threshold"])
+    reconstruction_error = float(prediction["reconstruction_error"])
+    percent_over = max(0.0, (reconstruction_error / threshold - 1) * 100) if threshold > 0 else 0.0
+
+    if severity == "critical":
+        emoji, label = "🚨", "PERINGATAN KRITIS"
+    elif severity == "warning":
+        emoji, label = "⚠️", "Peringatan"
+    else:
+        emoji, label = "✅", "Normal"
+
+    detected_at = datetime.now(timezone.utc).strftime("%d %b %Y, %H:%M UTC")
+
+    return (
+        f"{emoji} {label} — {machine_id}\n\n"
+        f"Tingkat anomali: {percent_over:.0f}% di atas ambang batas normal.\n"
+        f"Terdeteksi: {detected_at}\n\n"
+        f"Ini adalah notifikasi pemantauan saja. Mohon periksa dashboard SPMS dan buat tiket perawatan jika diperlukan."
+    )
+
+
 @app.post("/api/predict/anomaly", response_model=schemas.AnomalyPredictionResponse)
 def predict_anomaly(
     http_request: Request,
     request: schemas.AnomalyPredictionRequest,
+    background_tasks: BackgroundTasks,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1461,7 +1642,7 @@ def predict_anomaly(
             detail=f"ML runtime dependency is missing: {exc}",
         ) from exc
 
-    _, severity = _save_anomaly_event(
+    event, severity = _save_anomaly_event(
         db,
         machine_id=request.machine_id,
         prediction=prediction,
@@ -1469,12 +1650,20 @@ def predict_anomaly(
         window_start=window[0]["timestamp"],
         window_end=window[-1]["timestamp"],
     )
+    background_tasks.add_task(
+        telegram_service.dispatch_alert_notifications,
+        anomaly_event_id=event.id,
+        machine_id=request.machine_id,
+        severity=severity,
+        message_text=_format_alert_notification_text(machine_id=request.machine_id, severity=severity, prediction=prediction),
+    )
     _record_audit_log(
         db,
         request=http_request,
         user_email=current_user.email,
         action="ANOMALY_PREDICTION_MANUAL",
         status_value="SUCCESS",
+        retry_on_deadlock=True,
     )
 
     return _prediction_response(
@@ -1490,6 +1679,7 @@ def predict_anomaly(
 @app.post("/api/predict/anomaly/latest", response_model=schemas.AnomalyPredictionResponse)
 def predict_latest_anomaly(
     request: Request,
+    background_tasks: BackgroundTasks,
     machine_id: str = "PMA Granulator #01",
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1514,7 +1704,7 @@ def predict_latest_anomaly(
             detail=f"ML runtime dependency is missing: {exc}",
         ) from exc
 
-    _, severity = _save_anomaly_event(
+    event, severity = _save_anomaly_event(
         db,
         machine_id=machine_id,
         prediction=prediction,
@@ -1522,12 +1712,20 @@ def predict_latest_anomaly(
         window_start=window_payload["window_start"],
         window_end=window_payload["window_end"],
     )
+    background_tasks.add_task(
+        telegram_service.dispatch_alert_notifications,
+        anomaly_event_id=event.id,
+        machine_id=machine_id,
+        severity=severity,
+        message_text=_format_alert_notification_text(machine_id=machine_id, severity=severity, prediction=prediction),
+    )
     _record_audit_log(
         db,
         request=request,
         user_email=current_user.email,
         action="ANOMALY_PREDICTION_LATEST",
         status_value="SUCCESS",
+        retry_on_deadlock=True,
     )
 
     return _prediction_response(
@@ -1552,6 +1750,7 @@ def read_threshold_setting(
         user_email=current_user.email,
         action="THRESHOLD_OVERRIDE_VIEW",
         status_value="SUCCESS",
+        retry_on_deadlock=True,
     )
     return _threshold_state(db)
 
@@ -1608,6 +1807,90 @@ def reset_threshold_setting(
     return _threshold_state(db)
 
 
+@app.get("/api/settings/notifications", response_model=schemas.NotificationSettingResponse)
+def read_notification_setting(
+    request: Request,
+    current_user: models.User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    _record_audit_log(
+        db,
+        request=request,
+        user_email=current_user.email,
+        action="NOTIFICATION_SETTINGS_VIEW",
+        status_value="SUCCESS",
+        retry_on_deadlock=True,
+    )
+    return telegram_service.notification_settings_state(db)
+
+
+@app.patch("/api/settings/notifications", response_model=schemas.NotificationSettingResponse)
+def update_notification_setting(
+    request: Request,
+    update: schemas.NotificationSettingUpdate,
+    current_user: models.User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    setting = (
+        db.query(models.RuntimeSetting)
+        .filter(models.RuntimeSetting.key == telegram_service.NOTIFICATION_SETTINGS_KEY)
+        .first()
+    )
+    payload = json.dumps(
+        {"enabled": update.enabled, "min_severity": update.min_severity},
+        separators=(",", ":"),
+    )
+    if setting is None:
+        setting = models.RuntimeSetting(key=telegram_service.NOTIFICATION_SETTINGS_KEY, value_json=payload)
+        db.add(setting)
+    else:
+        setting.value_json = payload
+    setting.reason = update.reason
+    setting.updated_by = current_user.email
+    setting.updated_at = datetime.now(timezone.utc)
+
+    _record_audit_log(
+        db,
+        request=request,
+        user_email=current_user.email,
+        action="NOTIFICATION_SETTINGS_UPDATE",
+        status_value="SUCCESS",
+    )
+
+    db.commit()
+    return telegram_service.notification_settings_state(db)
+
+
+@app.get("/api/notifications/history", response_model=list[schemas.NotificationLogResponse])
+def read_notification_history(
+    request: Request,
+    status_filter: str | None = None,
+    channel: str | None = None,
+    user_id: int | None = None,
+    limit: int = 50,
+    current_user: models.User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    _record_audit_log(
+        db,
+        request=request,
+        user_email=current_user.email,
+        action="NOTIFICATION_HISTORY_VIEW",
+        status_value="SUCCESS",
+        retry_on_deadlock=True,
+    )
+
+    safe_limit = max(1, min(limit, 200))
+    query = db.query(models.NotificationLog)
+    if status_filter and status_filter != "all":
+        query = query.filter(models.NotificationLog.status == status_filter)
+    if channel and channel != "all":
+        query = query.filter(models.NotificationLog.channel == channel)
+    if user_id is not None:
+        query = query.filter(models.NotificationLog.user_id == user_id)
+    return query.order_by(models.NotificationLog.created_at.desc()).limit(safe_limit).all()
+
+
 @app.get("/api/system/status", response_model=schemas.SystemStatusResponse)
 def read_system_status(
     request: Request,
@@ -1644,6 +1927,7 @@ def read_system_status(
         user_email=current_user.email,
         action="SYSTEM_STATUS_VIEW",
         status_value="SUCCESS",
+        retry_on_deadlock=True,
     )
 
     return payload
@@ -1662,6 +1946,7 @@ def read_dashboard_summary(
         user_email=current_user.email,
         action="DASHBOARD_SUMMARY_VIEW",
         status_value="SUCCESS",
+        retry_on_deadlock=True,
     )
 
     latest_rows = _latest_telemetry_rows(db, machine_id=machine_id, limit=1)
