@@ -7,8 +7,6 @@ const secondaryItems = [
 
 const Sidebar = () => {
   const location = useLocation();
-  const role = localStorage.getItem('role') || 'technician';
-  const isAdmin = role === 'admin';
 
   // Susunan Navigasi dinamis tanpa menu Settings terpisah
   const navItems = [
@@ -17,6 +15,7 @@ const Sidebar = () => {
     { path: '/app/vibration', icon: 'vibration', label: 'Vibration' },
     { path: '/app/chat', icon: 'chat', label: 'Chatbot' },
     { path: '/app/alerts', icon: 'warning', label: 'Alerts' },
+    { path: '/app/daily-summary', icon: 'summarize', label: 'Daily Summary' },
   ];
 
   const getMenuClasses = (path) => {

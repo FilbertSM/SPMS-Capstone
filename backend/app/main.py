@@ -87,7 +87,7 @@ from app.core.audit import (
     format_audit_timestamp as _format_audit_timestamp,
     is_retryable_lock_error,
 )
-from app.services import telegram_service
+from app.services import daily_summary_service, telegram_service
 
 THRESHOLD_OVERRIDE_KEY = "anomaly_threshold_override"
 VALID_TICKET_STATUSES = {"OPEN", "IN_REVIEW", "RESOLVED"}
@@ -260,6 +260,9 @@ async def _lifespan(app: FastAPI):
     telegram_listener_task = None
     if settings.TELEGRAM_BOT_TOKEN:
         telegram_listener_task = asyncio.create_task(telegram_service.run_link_listener_forever())
+    daily_summary_scheduler_task = asyncio.create_task(
+        daily_summary_service.run_daily_summary_scheduler_forever()
+    )
     yield
     if telegram_listener_task is not None:
         telegram_listener_task.cancel()
@@ -267,6 +270,11 @@ async def _lifespan(app: FastAPI):
             await telegram_listener_task
         except asyncio.CancelledError:
             pass
+    daily_summary_scheduler_task.cancel()
+    try:
+        await daily_summary_scheduler_task
+    except asyncio.CancelledError:
+        pass
 
 
 def get_application() -> FastAPI:
@@ -407,6 +415,31 @@ def get_current_admin(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access Denied: Administrative Privileges Required",
+        )
+
+    return current_user
+
+
+def get_current_technician_or_admin(
+    request: Request,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role.lower() not in ["admin", "super_admin", "technician"]:
+        client_ip, user_agent = _audit_context(request)
+        _append_audit_log(
+            db,
+            user_email=current_user.email,
+            action="UNAUTHORIZED_ACCESS",
+            status_value="FAILED",
+            ip_address=client_ip,
+            browser_info=user_agent,
+        )
+        db.commit()
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access Denied: Technician or Administrative Privileges Required",
         )
 
     return current_user
@@ -1593,6 +1626,140 @@ def export_alerts(
     response = StreamingResponse(iter([stream.getvalue()]), media_type="text/csv")
     response.headers["Content-Disposition"] = "attachment; filename=spms_alert_report.csv"
     return response
+
+
+@app.get("/api/alerts/daily-summary", response_model=schemas.DailyAlertSummaryResponse)
+def read_daily_alert_summary(
+    request: Request,
+    date: Optional[str] = None,
+    machine_id: str = "PMA Granulator #01",
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    target_date = daily_summary_service.parse_target_date(date)
+    _record_audit_log(
+        db,
+        request=request,
+        user_email=current_user.email,
+        action="DAILY_SUMMARY_VIEW",
+        status_value="SUCCESS",
+        retry_on_deadlock=True,
+    )
+    return daily_summary_service.compute_daily_alert_summary(db, target_date=target_date, machine_id=machine_id)
+
+
+@app.get("/api/alerts/daily-summary/history", response_model=list[schemas.DailyHistoryItem])
+def read_daily_summary_history(
+    request: Request,
+    machine_id: str = "PMA Granulator #01",
+    limit: int = 30,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _record_audit_log(
+        db,
+        request=request,
+        user_email=current_user.email,
+        action="DAILY_SUMMARY_HISTORY_VIEW",
+        status_value="SUCCESS",
+        retry_on_deadlock=True,
+    )
+    safe_limit = max(1, min(limit, 90))
+    return daily_summary_service.get_daily_history_log(db, machine_id=machine_id, limit=safe_limit)
+
+
+@app.get("/api/alerts/daily-summary/report-pdf")
+def get_daily_summary_pdf_report(
+    request: Request,
+    date: Optional[str] = None,
+    machine_id: str = "PMA Granulator #01",
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    target_date = daily_summary_service.parse_target_date(date)
+    _record_audit_log(
+        db,
+        request=request,
+        user_email=current_user.email,
+        action="DAILY_SUMMARY_PDF_EXPORT",
+        status_value="SUCCESS",
+        retry_on_deadlock=True,
+    )
+    summary = daily_summary_service.compute_daily_alert_summary(db, target_date=target_date, machine_id=machine_id)
+    pdf_bytes = daily_summary_service.generate_daily_pdf_report(summary, summary.get("ai_analysis", {}))
+
+    filename = f"SPMS_Laporan_Harian_{summary['date']}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename={filename}"},
+    )
+
+
+@app.post("/api/alerts/daily-summary/dispatch", response_model=schemas.DailySummaryDispatchResponse)
+async def dispatch_daily_alert_summary(
+    request: Request,
+    body: Optional[schemas.DailySummaryDispatchRequest] = None,
+    machine_id: str = "PMA Granulator #01",
+    current_user: models.User = Depends(get_current_technician_or_admin),
+    db: Session = Depends(get_db),
+):
+    target_date_str = body.date if body else None
+    target_date = daily_summary_service.parse_target_date(target_date_str)
+    summary = daily_summary_service.compute_daily_alert_summary(db, target_date=target_date, machine_id=machine_id)
+
+    recipients_count, channels_used = await daily_summary_service.dispatch_daily_summary_notifications(
+        summary=summary,
+        db=db,
+        sender_email=current_user.email,
+    )
+
+    return schemas.DailySummaryDispatchResponse(
+        success=True,
+        recipients_count=recipients_count,
+        channels=channels_used,
+        summary_date=summary["date"],
+        message=f"Daily summary for {summary['date']} successfully dispatched to {recipients_count} recipient(s) via {', '.join(channels_used) if channels_used else 'no active channels'}.",
+    )
+
+
+@app.get("/api/admin/daily-summary-schedule", response_model=schemas.DailySummaryScheduleResponse)
+def read_daily_summary_schedule(
+    request: Request,
+    current_user: models.User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    _record_audit_log(
+        db,
+        request=request,
+        user_email=current_user.email,
+        action="DAILY_SUMMARY_SCHEDULE_VIEW",
+        status_value="SUCCESS",
+        retry_on_deadlock=True,
+    )
+    return daily_summary_service.get_daily_summary_schedule(db)
+
+
+@app.put("/api/admin/daily-summary-schedule", response_model=schemas.DailySummaryScheduleResponse)
+def update_daily_summary_schedule(
+    request: Request,
+    body: schemas.DailySummaryScheduleUpdate,
+    current_user: models.User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    updated = daily_summary_service.update_daily_summary_schedule(
+        db=db,
+        update_data=body,
+        updated_by=current_user.email,
+    )
+    _record_audit_log(
+        db,
+        request=request,
+        user_email=current_user.email,
+        action="DAILY_SUMMARY_SCHEDULE_UPDATE",
+        status_value="SUCCESS",
+    )
+    return updated
 
 
 def _format_alert_notification_text(*, machine_id: str, severity: str, prediction: dict) -> str:

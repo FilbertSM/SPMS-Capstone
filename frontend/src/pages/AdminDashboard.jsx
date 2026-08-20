@@ -41,6 +41,55 @@ const AdminDashboard = () => {
   const [notifReasonDraft, setNotifReasonDraft] = useState('');
   const [notifSettingsSaving, setNotifSettingsSaving] = useState(false);
 
+  // --- STATE FOR DAILY SUMMARY SCHEDULE ---
+  const [dailySchedule, setDailySchedule] = useState(null);
+  const [dailyScheduleLoading, setDailyScheduleLoading] = useState(true);
+  const [dailyScheduleError, setDailyScheduleError] = useState(null);
+  const [dailyScheduleSuccess, setDailyScheduleSuccess] = useState(null);
+  const [scheduleEnabledDraft, setScheduleEnabledDraft] = useState(true);
+  const [scheduleTimeDraft, setScheduleTimeDraft] = useState('17:00');
+  const [scheduleReasonDraft, setScheduleReasonDraft] = useState('');
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+
+  const loadDailySchedule = async () => {
+    setDailyScheduleLoading(true);
+    try {
+      const data = await fetchJsonWithAuth('/api/admin/daily-summary-schedule');
+      setDailySchedule(data);
+      setScheduleEnabledDraft(Boolean(data.enabled));
+      setScheduleTimeDraft(data.dispatch_time || '17:00');
+      setScheduleReasonDraft(data.reason || '');
+      setDailyScheduleError(null);
+    } catch (err) {
+      setDailyScheduleError(err.message || 'Failed to load daily summary schedule.');
+    } finally {
+      setDailyScheduleLoading(false);
+    }
+  };
+
+  const saveDailySchedule = async (event) => {
+    event.preventDefault();
+    setScheduleSaving(true);
+    setDailyScheduleError(null);
+    setDailyScheduleSuccess(null);
+    try {
+      const payload = await fetchJsonWithAuth('/api/admin/daily-summary-schedule', {
+        method: 'PUT',
+        body: JSON.stringify({
+          enabled: scheduleEnabledDraft,
+          dispatch_time: scheduleTimeDraft,
+          reason: scheduleReasonDraft,
+        }),
+      });
+      setDailySchedule(payload);
+      setDailyScheduleSuccess('Daily summary schedule saved and logged to audit trail.');
+    } catch (err) {
+      setDailyScheduleError(err.message);
+    } finally {
+      setScheduleSaving(false);
+    }
+  };
+
   const loadNotifSettings = async () => {
     setNotifSettingsLoading(true);
     try {
@@ -124,12 +173,25 @@ const AdminDashboard = () => {
     }
   };
 
+  const loadUsers = async () => {
+    setIsLoading(true);
+    try {
+      const data = await fetchJsonWithAuth('/api/users');
+      setUsers(data);
+    } catch (err) {
+      setError(err.message || 'Failed to load users. Backend endpoint missing?');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'users') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       loadUsers();
     } else if (activeTab === 'notifications') {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       loadNotifSettings();
+      loadDailySchedule();
       loadEligibility();
       loadHistory();
     }
@@ -143,18 +205,6 @@ const AdminDashboard = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyStatusFilter, historyChannelFilter]);
-
-  const loadUsers = async () => {
-    setIsLoading(true);
-    try {
-      const data = await fetchJsonWithAuth('/api/users');
-      setUsers(data);
-    } catch (err) {
-      setError(err.message || 'Failed to load users. Backend endpoint missing?');
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   // --- HANDLERS FOR EDIT USER ---
   const openEditModal = (user) => {
@@ -247,7 +297,7 @@ const AdminDashboard = () => {
             <span className="material-symbols-outlined text-[18px]">security</span>
             Security Audit Logs
           </button>
-          <button
+          {/* <button
             onClick={() => setActiveTab('settings')}
             className={`pb-4 text-sm font-bold flex items-center gap-2 transition-all border-b-2 ${
               activeTab === 'settings' ? 'text-[#1b263b] border-[#1b263b]' : 'text-[#75777d] border-transparent hover:text-[#1b263b]'
@@ -255,7 +305,7 @@ const AdminDashboard = () => {
           >
             <span className="material-symbols-outlined text-[18px]">tune</span>
             System Settings
-          </button>
+          </button> */}
           <button
             onClick={() => setActiveTab('notifications')}
             className={`pb-4 text-sm font-bold flex items-center gap-2 transition-all border-b-2 ${
@@ -448,6 +498,100 @@ const AdminDashboard = () => {
                   <button type="submit" disabled={notifSettingsSaving} className="btn-primary px-5 py-2.5 mt-0 disabled:opacity-60">
                     <span className="material-symbols-outlined text-[18px]">save</span>
                     Save Notification Settings
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Daily Summary Dispatch Schedule (WIB) Card */}
+            <div className="bg-white rounded-xl shadow-sm border border-[#c5c6cd]/20 p-6">
+              <div className="flex items-center justify-between gap-3 mb-6">
+                <div className="flex items-center gap-3">
+                  <span className="material-symbols-outlined text-[#1b263b] bg-[#f1f4f3] p-2 rounded-lg">
+                    schedule
+                  </span>
+                  <div>
+                    <h3 className="heading-secondary">Daily Summary Dispatch Schedule</h3>
+                    <p className="text-subtitle">Automated end-of-day digest broadcast in WIB (Asia/Jakarta, UTC+7).</p>
+                  </div>
+                </div>
+                <span className={`inline-flex w-fit items-center rounded-md px-3 py-2 text-[10px] font-black uppercase tracking-widest ${dailySchedule?.enabled ? 'bg-[#e8f5e9] text-[#00743a]' : 'bg-[#fff4ce] text-[#805600]'}`}>
+                  {dailyScheduleLoading ? 'Loading...' : dailySchedule?.enabled ? 'Active' : 'Paused'}
+                </span>
+              </div>
+
+              {dailyScheduleError && (
+                <div className="bg-[#ffdad6] border border-[#ba1a1a]/20 text-[#ba1a1a] rounded-lg px-4 py-3 text-sm font-bold mb-4">
+                  {dailyScheduleError}
+                </div>
+              )}
+              {dailyScheduleSuccess && (
+                <div className="bg-[#e8f5e9] border border-[#006d37]/20 text-[#006d37] rounded-lg px-4 py-3 text-sm font-bold mb-4">
+                  {dailyScheduleSuccess}
+                </div>
+              )}
+
+              <form onSubmit={saveDailySchedule} className="rounded-lg border border-[#c5c6cd]/30 bg-[#f7faf9] p-5 space-y-4">
+                <div className="flex items-center justify-between py-2 border-b border-[#c5c6cd]/10">
+                  <div>
+                    <p className="text-[13px] font-bold text-[#1b263b]">Automated Daily Broadcast</p>
+                    <p className="text-[11px] text-[#45474d]">Automatically compile and send summary digest to eligible recipients.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setScheduleEnabledDraft((current) => !current)}
+                    className={`w-12 h-6 rounded-full relative flex items-center transition-colors shrink-0 ${scheduleEnabledDraft ? 'bg-[#2ecc71]' : 'bg-[#e0e3e2]'}`}
+                  >
+                    <div className={`w-4 h-4 bg-white rounded-full absolute transition-transform ${scheduleEnabledDraft ? 'translate-x-7' : 'translate-x-1'}`}></div>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="form-label mb-2">Daily Dispatch Time (WIB)</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="time"
+                        value={scheduleTimeDraft}
+                        onChange={(event) => setScheduleTimeDraft(event.target.value)}
+                        className="input-field bg-white font-mono font-bold"
+                        required
+                      />
+                      <span className="px-2.5 py-2 bg-[#1b263b] text-[#6bfe9c] rounded-md text-[10px] font-black uppercase tracking-wider shrink-0">
+                        WIB (UTC+7)
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="form-label mb-2">Delivery Channels</label>
+                    <div className="flex items-center gap-2 pt-2">
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#0088cc]/10 text-[#0088cc] text-xs font-bold">
+                        <span className="material-symbols-outlined text-sm">send</span> Telegram
+                      </span>
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#00743a]/10 text-[#00743a] text-xs font-bold">
+                        <span className="material-symbols-outlined text-sm">mail</span> FastMail Email
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="form-label mb-2">Audit Reason</label>
+                  <input
+                    value={scheduleReasonDraft}
+                    onChange={(event) => setScheduleReasonDraft(event.target.value)}
+                    minLength={3}
+                    className="input-field bg-white"
+                    placeholder="Reason for modifying daily schedule"
+                    required
+                  />
+                </div>
+
+                <div className="flex justify-end">
+                  <button type="submit" disabled={scheduleSaving} className="btn-primary px-5 py-2.5 mt-0 disabled:opacity-60">
+                    <span className="material-symbols-outlined text-[18px]">save</span>
+                    {scheduleSaving ? 'Saving...' : 'Save Schedule Settings'}
                   </button>
                 </div>
               </form>

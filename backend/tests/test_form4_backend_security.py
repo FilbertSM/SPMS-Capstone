@@ -139,12 +139,18 @@ class Form4BackendSecurityTests(unittest.TestCase):
         self.assertEqual(login_response.status_code, 200)
 
     def test_register_and_dashboard_summary_create_audit_evidence(self):
+        test_email = "new.user@gmail.com"
+        main_module.pending_registration_otps[test_email] = {
+            "otp": "123456",
+            "expires": datetime.utcnow() + timedelta(minutes=15),
+        }
         register_response = self.client.post(
             "/api/register",
             json={
                 "full_name": "New User",
-                "email": "new.user@sakafarma.com",
+                "email": test_email,
                 "password": "Strong1!",
+                "otp": "123456",
             },
         )
         self.assertEqual(register_response.status_code, 201)

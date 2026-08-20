@@ -240,3 +240,72 @@ class NotificationLogResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class DailyHistoryItem(BaseModel):
+    date: str
+    day_name: str
+    status: str
+    status_label: str
+    total_events: int
+    anomaly_count: int
+    critical_count: int
+    warning_count: int
+    batches_processed: list[str]
+
+
+class DailySummaryAIAnalysis(BaseModel):
+    health_verdict: str
+    subsystem_motor: str
+    subsystem_vibration: str
+    subsystem_temperature: str
+    operational_notes: str
+    recommended_actions: list[str]
+
+
+class DailyAlertSummaryResponse(BaseModel):
+    date: str
+    machine_id: str
+    status: str
+    status_label: str
+    total_events: int
+    anomaly_count: int
+    normal_count: int
+    critical_count: int
+    warning_count: int
+    acknowledged_count: int
+    unacknowledged_count: int
+    acknowledgement_rate_percent: float
+    ticket_count: int
+    batches_processed: list[str]
+    ai_analysis: DailySummaryAIAnalysis
+    top_anomalies: list[AlertResponse]
+    pdf_report_url: str
+
+
+class DailySummaryScheduleResponse(BaseModel):
+    enabled: bool
+    dispatch_time: str = "17:00"
+    timezone: str = "Asia/Jakarta"
+    channels: list[str] = ["telegram", "email"]
+    reason: str | None = None
+    updated_by: str | None = None
+    updated_at: datetime | None = None
+
+
+class DailySummaryScheduleUpdate(BaseModel):
+    enabled: bool
+    dispatch_time: str = Field(..., pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    reason: str = Field(..., min_length=3, max_length=1000)
+
+
+class DailySummaryDispatchRequest(BaseModel):
+    date: str | None = None
+
+
+class DailySummaryDispatchResponse(BaseModel):
+    success: bool
+    recipients_count: int
+    channels: list[str]
+    summary_date: str
+    message: str
